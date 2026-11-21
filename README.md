@@ -16,3 +16,12 @@ Languages: English, Deutsch, Français (automatic from Dalamud's language, chang
 - **Multiple characters:** filter per character or "All"
 - **CSV export**
 - Commands: `/gil`, `/gilbanking`, `/gilbanking settings`
+
+
+## Install
+
+In-game, open Dalamud settings (`/xlsettings`) → **Experimental** → **Custom Plugin Repositories**, then add:
+
+https://raw.githubusercontent.com/Available5673/GilBanking/refs/heads/main/repo.json
+
+Save, then open the plugin installer (`/xlplugins`) and search for **Gil-Banking**.
