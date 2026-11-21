@@ -11,6 +11,7 @@
     "RepoUrl": "https://github.com/Available5673/GilBanking",
     "DownloadLinkInstall": "https://github.com/Available5673/GilBanking/releases/download/v0.1.0-beta.1/GilBanking.zip",
     "DownloadLinkUpdate": "https://github.com/Available5673/GilBanking/releases/download/v0.1.0-beta.1/GilBanking.zip",
+    "IconUrl": "https://raw.githubusercontent.com/Available5673/GilBanking/refs/heads/main/assets/icon.png",
     "IsHide": false,
     "IsTestingExclusive": false
   }
