@@ -1,0 +1,13 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+  <!--
+    Die SDK-Version bestimmt den Dalamud-API-Level (15.x = API 15).
+    Bei neuen Dalamud-Versionen hier erhöhen (nuget.org/packages/Dalamud.NET.Sdk).
+  -->
+  <PropertyGroup>
+    <Version>0.2.0.0</Version>
+    <Description>Gil and sales tracker (read-only, no automation).</Description>
+    <PackageProjectUrl>https://example.invalid/GilBanking</PackageProjectUrl>
+    <IsPackable>false</IsPackable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+</Project>

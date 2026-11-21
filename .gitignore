@@ -1,0 +1,21 @@
+# Build-Ausgaben und temporäre .NET-Ordner
+[Bb]in/
+[Oo]bj/
+[Ll]ogs/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.vscode/
+*.user
+*.userosscache
+*.suo
+*.sln.docstates
+
+# NuGet- und Paket-Caches
+packages/
+*.nupkg
+
+# Lokale Daten / Exporte / temporäre Testdateien
+*.csv
+*.bak
+*.tmp
