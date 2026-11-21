@@ -13,7 +13,8 @@ namespace GilBanking;
 /// im Spiel mit der Maus anvisiert wird. Rein lesend: es wird nur gelesen, welches Item gerade unter
 /// dem Mauszeiger liegt.
 /// Preisquelle wählbar: eigene Welt, eigenes Rechenzentrum, ganz Europa oder eigene Eingabe.
-/// Bei weiter Quelle wird zusätzlich der Preis der eigenen Welt gezeigt und die mögliche Ersparnis.
+/// Bei abweichender Quelle folgt ein Block für die Heimatwelt (NQ und HQ getrennt) mit Vergleich
+/// in derselben Qualität wie das Item unter der Maus.
 /// </summary>
 public sealed class ItemTooltip
 {
@@ -55,22 +56,26 @@ public sealed class ItemTooltip
         }
     }
 
-    /// <summary>Abfrage-Bereich laut Einstellung. Bei Europa/Eigene Eingabe ist kein eingeloggter Charakter nötig.</summary>
-    private string? ResolveScope(string? world, string? dc)
+    /// <summary>
+    /// Abfrage-Bereich laut Einstellung. Die Heimatwelt ist fest (Einstellung oder Heimatwelt des Charakters)
+    /// und ändert sich nicht, wenn man gerade auf einer anderen Welt zu Besuch ist.
+    /// </summary>
+    private string? ResolveScope(string? homeWorld, string? homeDc)
     {
         return config.TooltipScopeMode switch
         {
-            1 => dc ?? world,
+            1 => homeDc ?? homeWorld,
             2 => "Europe",
-            3 => string.IsNullOrWhiteSpace(config.TooltipCustomScope) ? world : config.TooltipCustomScope.Trim(),
-            _ => world,
+            3 => string.IsNullOrWhiteSpace(config.TooltipCustomScope) ? homeWorld : config.TooltipCustomScope.Trim(),
+            _ => homeWorld,
         };
     }
 
-    private static double LowestPrice(MarketInfo m)
+    /// <summary>Günstigstes Angebot einer Qualität (mit Welt, falls bekannt).</summary>
+    private static (double Price, string World) Cheapest(MarketInfo m, bool hq)
     {
-        if (m.MinNq > 0 && m.MinHq > 0) return Math.Min(m.MinNq, m.MinHq);
-        return Math.Max(m.MinNq, m.MinHq);
+        if (hq) return m.CheapestHqPrice > 0 ? (m.CheapestHqPrice, m.CheapestHqWorld) : (m.MinHq, "");
+        return m.CheapestNqPrice > 0 ? (m.CheapestNqPrice, m.CheapestNqWorld) : (m.MinNq, "");
     }
 
     private void DrawInternal()
@@ -102,29 +107,32 @@ public sealed class ItemTooltip
         var tradable = row.ItemSearchCategory.RowId != 0 && !row.IsUntradable;
         var canHq = row.CanBeHq;
 
-        string? world = null;
-        string? dc = null;
+        // Heimatwelt (hier verkaufen die Retainer): feste Einstellung, sonst die Heimatwelt des Charakters.
+        string? homeWorld = string.IsNullOrWhiteSpace(config.HomeWorld) ? null : config.HomeWorld.Trim();
+        string? homeDc = null;
         var player = objectTable.LocalPlayer;
         if (player != null)
         {
-            var w = player.CurrentWorld.ValueNullable;
-            if (w != null)
-            {
-                world = w.Value.Name.ToString();
-                dc = w.Value.DataCenter.ValueNullable?.Name.ToString();
-            }
+            var hw = player.HomeWorld.ValueNullable;
+            if (homeWorld == null && hw != null) homeWorld = hw.Value.Name.ToString();
+            if (homeWorld != null && hw != null && string.Equals(homeWorld, hw.Value.Name.ToString(), StringComparison.OrdinalIgnoreCase))
+                homeDc = hw.Value.DataCenter.ValueNullable?.Name.ToString();
         }
+        // Die bekannte Liste hat Vorrang: die Spieldaten ordnen z. B. Light-Welten falsch zu.
+        homeDc = Worlds.DataCenterOf(homeWorld) ?? homeDc;
 
-        var scope = ResolveScope(world, dc);
-        var wide = scope != null && !string.Equals(scope, world, StringComparison.OrdinalIgnoreCase);
+        var scope = ResolveScope(homeWorld, homeDc);
+        var showHome = config.TooltipCompareHome
+                       && !string.IsNullOrEmpty(homeWorld)
+                       && !string.IsNullOrEmpty(scope)
+                       && !string.Equals(scope, homeWorld, StringComparison.OrdinalIgnoreCase);
 
         MarketInfo? info = null;
         MarketInfo? home = null;
         if (tradable && !string.IsNullOrEmpty(scope))
         {
             info = market.Get(id, scope);
-            if (wide && config.TooltipCompareHome && !string.IsNullOrEmpty(world))
-                home = market.Get(id, world);
+            if (showHome) home = market.Get(id, homeWorld!);
         }
 
         var s = ImGuiHelpers.GlobalScale;
@@ -174,15 +182,13 @@ public sealed class ItemTooltip
             else
             {
                 ImGui.TextColored(Ui.Dim, L.F("tip.board", scope));
-                PriceLine(L.T("tip.minNq"), info.MinNq);
-                if (canHq) PriceLine(L.T("tip.minHq"), info.MinHq);
 
-                if (wide && info.CheapestPrice > 0)
+                var (nqPrice, nqWorld) = Cheapest(info, false);
+                PriceLine(L.T("tip.minNq"), nqPrice, nqWorld, scope);
+                if (canHq)
                 {
-                    var w = string.IsNullOrEmpty(info.CheapestWorld) ? "" : $" ({info.CheapestWorld})";
-                    ImGui.Text(L.T("tip.cheapest"));
-                    ImGui.SameLine();
-                    ImGui.TextColored(Ui.Good, $"{Ui.Gil((long)info.CheapestPrice)} Gil{w}");
+                    var (hqPrice, hqWorld) = Cheapest(info, true);
+                    PriceLine(L.T("tip.minHq"), hqPrice, hqWorld, scope);
                 }
 
                 PriceLine(L.T("tip.avgCur"), info.AvgCurrent);
@@ -195,40 +201,11 @@ public sealed class ItemTooltip
                     ImGui.TextColored(Ui.Text, info.SaleVelocity.ToString("0.#", L.Culture));
                 }
                 if (info.LastUpload != null)
-                    ImGui.TextColored(Ui.Dim, L.F("tip.updated", Age(info.LastUpload.Value)));
+                    ImGui.TextColored(Ui.Dim, L.F("tip.updated", L.Age(info.LastUpload.Value)));
 
-                // Vergleich mit der eigenen Welt: wo ist es günstiger?
-                if (wide && config.TooltipCompareHome && !string.IsNullOrEmpty(world))
-                {
-                    ImGui.Separator();
-                    if (home == null)
-                    {
-                        ImGui.TextColored(Ui.Dim, L.F("tip.loading", world));
-                    }
-                    else if (home.Ok && !home.NoData)
-                    {
-                        var homeLow = LowestPrice(home);
-                        ImGui.Text(L.F("tip.home", world));
-                        ImGui.SameLine();
-                        if (homeLow > 0) ImGui.TextColored(Ui.Gold, $"{Ui.Gil((long)homeLow)} Gil");
-                        else ImGui.TextColored(Ui.Dim, "–");
-
-                        if (info.CheapestPrice > 0 && homeLow > 0)
-                        {
-                            if (info.CheapestPrice < homeLow)
-                            {
-                                var diff = homeLow - info.CheapestPrice;
-                                var pct = diff / homeLow * 100d;
-                                var cheapWorld = string.IsNullOrEmpty(info.CheapestWorld) ? scope : info.CheapestWorld;
-                                ImGui.TextColored(Ui.Good, L.F("tip.save", Ui.Gil((long)diff), pct.ToString("0", L.Culture), cheapWorld));
-                            }
-                            else
-                            {
-                                ImGui.TextColored(Ui.Dim, L.T("tip.homeBest"));
-                            }
-                        }
-                    }
-                }
+                // Heimatwelt: lohnt es sich, dort einzustellen?
+                if (showHome)
+                    DrawHomeBlock(info, home, homeWorld!, scope, canHq, hq);
             }
 
             if (ownCount > 0)
@@ -248,15 +225,83 @@ public sealed class ItemTooltip
         ImGui.PopStyleVar(2);
     }
 
-    private static void PriceLine(string label, double value)
+    /// <summary>
+    /// Preise auf der Heimatwelt (NQ und HQ getrennt) und Vergleich mit dem günstigsten Angebot im Abfragebereich.
+    /// Verglichen wird immer die Qualität des Items unter der Maus (HQ mit HQ, NQ mit NQ).
+    /// </summary>
+    private static void DrawHomeBlock(MarketInfo info, MarketInfo? home, string homeWorld, string scope, bool canHq, bool hq)
+    {
+        ImGui.Separator();
+        ImGui.TextColored(Ui.Accent, L.F("tip.homeWorld", homeWorld));
+
+        if (home == null)
+        {
+            ImGui.TextColored(Ui.Dim, L.F("tip.loading", homeWorld));
+            return;
+        }
+        if (!home.Ok)
+        {
+            ImGui.TextColored(Ui.Bad, L.T("tip.unreachable"));
+            return;
+        }
+
+        var cmpHq = canHq && hq;
+        var qLabel = canHq ? (hq ? "HQ" : "NQ") : "";
+
+        PriceLine(L.T("tip.minNq"), Cheapest(home, false).Price);
+        if (canHq) PriceLine(L.T("tip.minHq"), Cheapest(home, true).Price);
+
+        if (!home.NoData)
+        {
+            PriceLine(L.T("tip.avgSold"), home.AvgSold);
+            if (home.SaleVelocity > 0)
+            {
+                ImGui.Text(L.T("tip.velocity"));
+                ImGui.SameLine();
+                ImGui.TextColored(Ui.Text, home.SaleVelocity.ToString("0.#", L.Culture));
+            }
+        }
+
+        if (canHq) ImGui.TextColored(Ui.Dim, L.F("tip.compareFor", qLabel));
+
+        var homePrice = home.NoData ? 0 : Cheapest(home, cmpHq).Price;
+        var (bestPrice, bestWorld) = Cheapest(info, cmpHq);
+
+        if (homePrice <= 0)
+        {
+            // Niemand bietet es (in dieser Qualität) auf der Heimatwelt an.
+            ImGui.TextColored(Ui.Good, canHq ? L.F("tip.noneOnHome", qLabel) : L.T("tip.noneOnHomeAny"));
+        }
+        else if (bestPrice > 0 && bestPrice < homePrice)
+        {
+            var diff = homePrice - bestPrice;
+            var pct = diff / homePrice * 100d;
+            var where = string.IsNullOrEmpty(bestWorld) ? scope : bestWorld;
+            ImGui.TextColored(Ui.Good, L.F("tip.cheaperElsewhere", Ui.Gil((long)diff), pct.ToString("0", L.Culture), where));
+            ImGui.TextColored(Ui.Gold, L.F("tip.margin", Ui.Gil((long)diff)));
+        }
+        else if (bestPrice > 0)
+        {
+            ImGui.TextColored(Ui.Dim, L.T("tip.homeCheapest"));
+        }
+    }
+
+    private static void PriceLine(string label, double value, string world = "", string? scope = null)
     {
         ImGui.Text(label);
         ImGui.SameLine();
-        if (value > 0) ImGui.TextColored(Ui.Gold, $"{Ui.Gil((long)value)} Gil");
-        else ImGui.TextColored(Ui.Dim, "–");
+        if (value > 0)
+        {
+            var suffix = !string.IsNullOrEmpty(world) && !string.Equals(world, scope, StringComparison.OrdinalIgnoreCase)
+                ? $" ({world})"
+                : "";
+            ImGui.TextColored(Ui.Gold, $"{Ui.Gil((long)value)} Gil{suffix}");
+        }
+        else
+        {
+            ImGui.TextColored(Ui.Dim, "–");
+        }
     }
-
-    private static string Age(DateTime utc) => L.Age(utc);
 
     private void CalcOwn(uint id)
     {

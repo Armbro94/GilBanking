@@ -27,6 +27,10 @@ public sealed class LedgerEntry
 
     [JsonIgnore]
     public long UnitGil => Quantity > 0 ? TotalGil / Quantity : TotalGil;
+
+    /// <summary>Reparaturen und sonstige Gil-Änderungen: gehören in den Tab "Ausgaben", nicht zu den Item-Verkäufen.</summary>
+    [JsonIgnore]
+    public bool IsExpenseEntry => Source == "Repair" || Source == "Other" || ItemName == "@repair";
 }
 
 /// <summary>Gil-Stand eines Charakters (plus zuletzt bekannte Retainer-Gil) zu einem Zeitpunkt.</summary>
@@ -37,8 +41,16 @@ public sealed class GilSnapshot
     public long RetainerGil { get; set; }
 }
 
+/// <summary>Gil-Stand zu Beginn des Tages (für "Heute"), bleibt bei Relog erhalten.</summary>
+public sealed class DaySession
+{
+    public string Day { get; set; } = "";
+    public long StartGil { get; set; }
+}
+
 public sealed class LedgerData
 {
+    public Dictionary<string, DaySession> Sessions { get; set; } = new();
     public List<LedgerEntry> Entries { get; set; } = new();
     public Dictionary<string, List<GilSnapshot>> Snapshots { get; set; } = new();
     public Dictionary<string, Dictionary<string, long>> Retainers { get; set; } = new();

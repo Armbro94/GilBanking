@@ -46,6 +46,7 @@ public sealed class MainWindow : Window
     private readonly Cache<List<ItemStat>> itemsCache = new();
     private readonly Cache<List<string>> charsCache = new();
     private readonly Cache<RetainerView> retainerCache = new();
+    private readonly Cache<ExpenseView> expenseCache = new();
 
     public MainWindow(Ledger ledger, GilTracker tracker, ChatTracker chat, Configuration config)
         : base("Gil-Banking###GilBankingMain")
@@ -104,6 +105,10 @@ public sealed class MainWindow : Window
         List<(DateTime T, double V)> Wealth);
 
     private sealed record RetainerEntry(string Character, string Name, long Gil, long Income, DateTime? Last);
+
+    private sealed record ExpenseView(
+        (long Repair, int RepairCount, long OtherOut, int OtherOutCount, long OtherIn, int OtherInCount) Sums,
+        List<LedgerEntry> Rows);
 
     private sealed record RetainerView(List<RetainerEntry> Cards, long TotalGil, long TotalIncome);
 
@@ -170,6 +175,7 @@ public sealed class MainWindow : Window
             if (ImGui.BeginTabItem(L.T("tab.overview") + "###gl_tab_overview")) { DrawOverview(); ImGui.EndTabItem(); }
             if (ImGui.BeginTabItem(L.T("tab.sales") + "###gl_tab_sales")) { DrawSales(); ImGui.EndTabItem(); }
             if (ImGui.BeginTabItem(L.T("tab.items") + "###gl_tab_items")) { DrawItems(); ImGui.EndTabItem(); }
+            if (ImGui.BeginTabItem(L.T("tab.expenses") + "###gl_tab_expenses")) { DrawExpenses(); ImGui.EndTabItem(); }
             if (ImGui.BeginTabItem(L.T("tab.retainers") + "###gl_tab_retainers")) { DrawRetainers(); ImGui.EndTabItem(); }
 
             var flags = selectSettings ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None;
@@ -398,6 +404,7 @@ public sealed class MainWindow : Window
         var q = search;
         var rows = salesCache.Get($"{BaseKey()}|{q}|{kf}", () => ledger.Data.Entries
             .Where(e => e.TimeUtc >= from && (ch == null || e.Character == ch))
+            .Where(e => !e.IsExpenseEntry)
             .Where(e => kf == 0 || (int)e.Kind == kf - 1)
             .Where(e => q.Length == 0 || e.ItemName.Contains(q, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(e => e.TimeUtc)
@@ -453,6 +460,85 @@ public sealed class MainWindow : Window
                 ImGui.EndDisabled();
                 if (!ledger.ProtectSales && ImGui.IsItemHovered()) ImGui.SetTooltip(L.T("del.tip"));
 
+                ImGui.PopID();
+            }
+            ImGui.EndTable();
+        }
+
+        if (toDelete != null) ledger.RemoveEntry(toDelete.Value);
+    }
+
+    // ---------- Ausgaben & Sonstiges ----------
+
+    private void DrawExpenses()
+    {
+        var s = ImGuiHelpers.GlobalScale;
+        var ch = SelectedChar();
+        var from = FromUtc();
+
+        var v = expenseCache.Get(BaseKey(), () => new ExpenseView(
+            ledger.GetExpenseTotals(ch, from),
+            ledger.Data.Entries
+                .Where(e => e.IsExpenseEntry && e.TimeUtc >= from && (ch == null || e.Character == ch))
+                .OrderByDescending(e => e.TimeUtc)
+                .Take(1000)
+                .ToList()));
+
+        var gap = 10 * s;
+        var cardW = (ImGui.GetContentRegionAvail().X - gap * 2) / 3f;
+        var sums = v.Sums;
+        Ui.Card(L.T("exp.cardRepair"), Ui.Gil(sums.Repair), Ui.Bad, cardW, Ui.Bad, L.F("exp.count", sums.RepairCount));
+        ImGui.SameLine(0, gap);
+        Ui.Card(L.T("exp.cardOut"), Ui.Gil(sums.OtherOut), Ui.Bad, cardW, Ui.Bad, L.F("exp.count", sums.OtherOutCount));
+        ImGui.SameLine(0, gap);
+        Ui.Card(L.T("exp.cardIn"), Ui.Gil(sums.OtherIn), Ui.Good, cardW, Ui.Good, L.F("exp.count", sums.OtherInCount));
+
+        ImGui.Spacing();
+        ImGui.TextWrapped(L.T("exp.hint"));
+        ImGui.Spacing();
+
+        if (v.Rows.Count == 0)
+        {
+            ImGui.TextColored(Ui.Dim, L.T("exp.empty"));
+            return;
+        }
+
+        const ImGuiTableFlags flags = ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.Resizable |
+                                      ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp;
+
+        Guid? toDelete = null;
+        if (ImGui.BeginTable("##gl_exp", 5, flags, new Vector2(0, ImGui.GetContentRegionAvail().Y)))
+        {
+            ImGui.TableSetupScrollFreeze(0, 1);
+            ImGui.TableSetupColumn(L.T("col.time"), ImGuiTableColumnFlags.WidthFixed, 125 * s);
+            ImGui.TableSetupColumn(L.T("col.type"), ImGuiTableColumnFlags.WidthStretch, 2f);
+            ImGui.TableSetupColumn(L.T("col.total"), ImGuiTableColumnFlags.WidthFixed, 115 * s);
+            ImGui.TableSetupColumn(L.T("col.char"), ImGuiTableColumnFlags.WidthStretch, 1.6f);
+            ImGui.TableSetupColumn("##del", ImGuiTableColumnFlags.WidthFixed, 28 * s);
+            ImGui.TableHeadersRow();
+
+            for (var i = 0; i < v.Rows.Count; i++)
+            {
+                var e = v.Rows[i];
+                var income = e.Kind == EntryKind.Sale;
+                ImGui.PushID(i);
+                ImGui.TableNextRow();
+
+                ImGui.TableNextColumn();
+                ImGui.TextColored(Ui.Dim, e.TimeUtc.ToLocalTime().ToString("g", L.Culture));
+                ImGui.TableNextColumn();
+                var label = e.Source == "Other" ? (income ? L.T("exp.otherIn") : L.T("exp.otherOut")) : L.T("src.Repair");
+                ImGui.Text(label);
+                if (!string.IsNullOrEmpty(e.Note) && ImGui.IsItemHovered()) ImGui.SetTooltip(e.Note);
+                ImGui.TableNextColumn();
+                ImGui.TextColored(income ? Ui.Good : Ui.Bad, (income ? "+" : "-") + Ui.Gil(e.TotalGil));
+                ImGui.TableNextColumn();
+                ImGui.TextColored(Ui.Dim, e.Character);
+                ImGui.TableNextColumn();
+                ImGui.BeginDisabled(ledger.ProtectSales);
+                if (ImGui.SmallButton("X") && ImGui.GetIO().KeyCtrl) toDelete = e.Id;
+                ImGui.EndDisabled();
+                if (!ledger.ProtectSales && ImGui.IsItemHovered()) ImGui.SetTooltip(L.T("del.tip"));
                 ImGui.PopID();
             }
             ImGui.EndTable();
@@ -591,6 +677,18 @@ public sealed class MainWindow : Window
             config.TrackRepairs = repair;
             config.Save();
         }
+        var market = config.TrackMarketBuys;
+        if (ImGui.Checkbox(L.T("chk.market"), ref market))
+        {
+            config.TrackMarketBuys = market;
+            config.Save();
+        }
+        var other = config.TrackOtherGil;
+        if (ImGui.Checkbox(L.T("chk.other"), ref other))
+        {
+            config.TrackOtherGil = other;
+            config.Save();
+        }
         var retSales = config.TrackRetainerSales;
         if (ImGui.Checkbox(L.T("chk.retainer"), ref retSales))
         {
@@ -604,13 +702,22 @@ public sealed class MainWindow : Window
             config.SnapshotIntervalSeconds = interval;
             config.Save();
         }
+        var thinOn = config.ThinHistory;
+        if (ImGui.Checkbox(L.T("chk.thin"), ref thinOn))
+        {
+            config.ThinHistory = thinOn;
+            config.Save();
+        }
         var thin = config.ThinAfterDays;
+        ImGui.BeginDisabled(!config.ThinHistory);
         ImGui.SetNextItemWidth(260 * s);
         if (ImGui.SliderInt(L.T("slider.thin"), ref thin, 7, 365))
         {
             config.ThinAfterDays = thin;
             config.Save();
         }
+        ImGui.EndDisabled();
+        ImGui.TextColored(Ui.Dim, L.T("thin.help"));
 
         // Speicherorte
         ImGui.Spacing();
@@ -658,6 +765,20 @@ public sealed class MainWindow : Window
             config.ShowMarketTooltip = showTip;
             config.Save();
         }
+        // Feste Heimatwelt
+        var worldNames = Worlds.Names;
+        var homeItems = new List<string> { L.T("home.auto") };
+        homeItems.AddRange(worldNames.Select(Worlds.Label));
+        var homeIdx = string.IsNullOrWhiteSpace(config.HomeWorld) ? 0 : worldNames.FindIndex(w => string.Equals(w, config.HomeWorld, StringComparison.OrdinalIgnoreCase)) + 1;
+        ImGui.TextColored(Ui.Dim, L.T("home.label"));
+        ImGui.SameLine();
+        if (Combo("##gl_home", 300 * s, homeItems, ref homeIdx))
+        {
+            config.HomeWorld = homeIdx <= 0 ? "" : worldNames[homeIdx - 1];
+            config.Save();
+        }
+        ImGui.TextColored(Ui.Dim, L.T("home.help"));
+
         var scopeItems = new[] { L.T("scope.world"), L.T("scope.dc"), L.T("scope.eu"), L.T("scope.custom") };
         var scopeMode = Math.Clamp(config.TooltipScopeMode, 0, 3);
         ImGui.TextColored(Ui.Dim, L.T("scope.label"));

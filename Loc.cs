@@ -46,7 +46,7 @@ internal static class L
 
         // ---- Tabs ----
         ["tab.overview"] = A("Overview", "Übersicht", "Aperçu"),
-        ["tab.sales"] = A("Sales", "Verkäufe", "Ventes"),
+        ["tab.sales"] = A("Sales & purchases", "Verkäufe & Einkäufe", "Ventes & achats"),
         ["tab.items"] = A("Items", "Items", "Objets"),
         ["tab.settings"] = A("Settings", "Einstellungen", "Paramètres"),
 
@@ -55,8 +55,8 @@ internal static class L
         ["card.retainer"] = A("Retainer gil", "Retainer-Gil", "Gils des servants"),
         ["card.retainerSub"] = A("last known value", "zuletzt bekannter Stand", "dernière valeur connue"),
         ["card.wealth"] = A("Total wealth", "Gesamtvermögen", "Fortune totale"),
-        ["card.session"] = A("This session", "Diese Sitzung", "Cette session"),
-        ["card.sessionSub"] = A("current character", "aktueller Charakter", "personnage actuel"),
+        ["card.session"] = A("Today", "Heute", "Aujourd'hui"),
+        ["card.sessionSub"] = A("gil change, current character", "Gil-Änderung, aktueller Charakter", "variation des gils, personnage actuel"),
         ["card.revenue"] = A("Revenue (sales)", "Umsatz (Verkäufe)", "Revenus (ventes)"),
         ["card.salesCount"] = A("{0} sales", "{0} Verkäufe", "{0} ventes"),
         ["card.expenses"] = A("Expenses (purchases)", "Ausgaben (Einkäufe)", "Dépenses (achats)"),
@@ -124,6 +124,34 @@ internal static class L
         ["src.Manual"] = A("Manual", "Manuell", "Manuel"),
         ["src.NPC"] = A("NPC shop", "NPC-Händler", "Marchand PNJ"),
         ["src.Repair"] = A("Repair", "Reparatur", "Réparation"),
+        ["src.Market"] = A("Market board", "Marktbrett", "Hôtel des ventes"),
+        ["src.Other"] = A("Other", "Sonstiges", "Divers"),
+        ["tab.expenses"] = A("Expenses & other", "Ausgaben & Sonstiges", "Dépenses & divers"),
+        ["exp.otherIn"] = A("Other income", "Sonstige Einnahme", "Autre revenu"),
+        ["exp.otherOut"] = A("Other expense", "Sonstige Ausgabe", "Autre dépense"),
+        ["exp.cardRepair"] = A("Repairs", "Reparaturen", "Réparations"),
+        ["exp.cardOut"] = A("Other expenses", "Sonstige Ausgaben", "Autres dépenses"),
+        ["exp.cardIn"] = A("Other income", "Sonstige Einnahmen", "Autres revenus"),
+        ["exp.count"] = A("{0} entries", "{0} Einträge", "{0} entrées"),
+        ["exp.empty"] = A(
+            "Nothing recorded in this period yet.",
+            "In diesem Zeitraum wurde noch nichts erfasst.",
+            "Rien d'enregistré pour cette période."),
+        ["exp.hint"] = A(
+            "Repairs and all other gil changes that are not item sales or purchases (quests, mail, trades, items, teleport …). Moves to and from your retainers are not counted. Hover a row to see which windows were open. Other gil is not part of revenue/profit.",
+            "Reparaturen und alle übrigen Gil-Änderungen, die keine Item-Käufe oder -Verkäufe sind (Quests, Post, Handel, Gegenstände, Teleport …). Ein- und Auszahlungen bei Retainern zählen nicht. Mit der Maus über eine Zeile sieht man, welche Fenster offen waren. Sonstige Gil zählen nicht zu Umsatz/Gewinn.",
+            "Réparations et toutes les autres variations de gils qui ne sont pas des ventes/achats d'objets (quêtes, courrier, échanges, objets, téléportation …). Les dépôts et retraits chez les servants ne comptent pas. Survolez une ligne pour voir les fenêtres ouvertes. Les autres gils ne comptent pas dans le chiffre d'affaires/bénéfice."),
+        ["chk.market"] = A("Track market board purchases", "Marktbrett-Käufe erfassen", "Suivre les achats à l'hôtel des ventes"),
+        ["chk.other"] = A(
+            "Track other gil changes (quests, mail, trades …)",
+            "Sonstige Gil-Änderungen erfassen (Quests, Post, Handel …)",
+            "Suivre les autres variations de gils (quêtes, courrier, échanges …)"),
+        ["home.label"] = A("Home world", "Heimatwelt", "Monde d'origine"),
+        ["home.auto"] = A("Automatic (my character's home world)", "Automatisch (Heimatwelt meines Charakters)", "Automatique (monde d'origine de mon personnage)"),
+        ["home.help"] = A(
+            "Fixed world for the tooltip price comparison. Visiting another world does not change it.",
+            "Feste Welt für den Preisvergleich im Tooltip. Ein Besuch auf einer anderen Welt ändert sie nicht.",
+            "Monde fixe pour la comparaison des prix. Une visite sur un autre monde ne la modifie pas."),
         ["src.Retainer"] = A("Retainer", "Retainer", "Servant"),
         ["name.retainer"] = A("Retainer sales", "Retainer-Verkäufe", "Ventes du servant"),
         ["chk.retainer"] = A(
@@ -150,7 +178,7 @@ internal static class L
 
         // ---- Tooltip: Preisquelle ----
         ["scope.label"] = A("Price source", "Preisquelle", "Source des prix"),
-        ["scope.world"] = A("My current world", "Meine aktuelle Welt", "Mon monde actuel"),
+        ["scope.world"] = A("My home world", "Meine Heimatwelt", "Mon monde d'origine"),
         ["scope.dc"] = A("My data center", "Mein Rechenzentrum", "Mon centre de données"),
         ["scope.eu"] = A("All of Europe", "Ganz Europa", "Toute l'Europe"),
         ["scope.custom"] = A("Custom …", "Eigene Eingabe …", "Personnalisé …"),
@@ -159,10 +187,32 @@ internal static class L
             "Welt, Rechenzentrum oder Region, z. B. Odin, Light oder Europe",
             "Monde, centre de données ou région, p. ex. Odin, Light ou Europe"),
         ["chk.compare"] = A(
-            "Also show the price on my own world and how much I'd save",
-            "Zusätzlich Preis auf meiner Welt zeigen und wie viel ich spare",
-            "Afficher aussi le prix sur mon monde et l'économie réalisée"),
+            "Also show prices on my home world (NQ/HQ) and compare",
+            "Zusätzlich Preise auf meiner Heimatwelt (NQ/HQ) zeigen und vergleichen",
+            "Afficher aussi les prix sur mon monde d'origine (NQ/HQ) et comparer"),
         ["tip.home"] = A("Your world ({0})", "Deine Welt ({0})", "Votre monde ({0})"),
+        ["tip.homeWorld"] = A("Your home world ({0})", "Deine Heimatwelt ({0})", "Votre monde d'origine ({0})"),
+        ["tip.compareFor"] = A("Comparison for {0}", "Vergleich für {0}", "Comparaison pour {0}"),
+        ["tip.noneOnHome"] = A(
+            "No {0} listings on your home world – you'd be the only seller.",
+            "Keine {0}-Angebote auf deiner Heimatwelt – du wärst der Einzige.",
+            "Aucune offre {0} sur votre monde d'origine – vous seriez le seul vendeur."),
+        ["tip.noneOnHomeAny"] = A(
+            "No listings on your home world – you'd be the only seller.",
+            "Keine Angebote auf deiner Heimatwelt – du wärst der Einzige.",
+            "Aucune offre sur votre monde d'origine – vous seriez le seul vendeur."),
+        ["tip.cheaperElsewhere"] = A(
+            "Cheaper on {2}: {0} Gil less (-{1}%)",
+            "Günstiger auf {2}: {0} Gil weniger (-{1} %)",
+            "Moins cher sur {2} : {0} Gil de moins (-{1} %)"),
+        ["tip.margin"] = A(
+            "Reselling on your home world: about +{0} Gil per unit (before tax)",
+            "Weiterverkauf auf deiner Heimatwelt: ca. +{0} Gil pro Stück (vor Steuer)",
+            "Revente sur votre monde d'origine : environ +{0} Gil par unité (avant taxe)"),
+        ["tip.homeCheapest"] = A(
+            "Your home world already has the lowest price.",
+            "Deine Heimatwelt hat bereits den niedrigsten Preis.",
+            "Votre monde d'origine a déjà le prix le plus bas."),
         ["tip.save"] = A(
             "Save {0} Gil (-{1}%) on {2}",
             "Du sparst {0} Gil (-{1} %) auf {2}",
@@ -186,7 +236,15 @@ internal static class L
             "Letzte Gil-Änderungen (Betrag | offene Fenster | Item-ID unter der Maus):",
             "Dernières variations de gils (montant | fenêtres ouvertes | id de l'objet survolé) :"),
         ["slider.gilInterval"] = A("Gil check every (seconds)", "Gil-Abfrage alle (Sekunden)", "Lecture des gils toutes les (secondes)"),
-        ["slider.thin"] = A("Thin out history after (days)", "Verlauf ausdünnen nach (Tagen)", "Alléger l'historique après (jours)"),
+        ["chk.thin"] = A(
+            "Thin out old gil history",
+            "Alten Gil-Verlauf ausdünnen",
+            "Alléger l'ancien historique des gils"),
+        ["thin.help"] = A(
+            "Off = the complete gil history is kept forever (the file grows a bit over time). On = after the chosen number of days only one point per day is kept. Sales are never thinned.",
+            "Aus = der komplette Gil-Verlauf bleibt für immer erhalten (die Datei wächst dann etwas). An = nach der gewählten Anzahl Tage bleibt nur ein Punkt pro Tag. Verkäufe werden nie ausgedünnt.",
+            "Désactivé = tout l'historique des gils est conservé pour toujours (le fichier grossit un peu). Activé = après le nombre de jours choisi, un seul point par jour est conservé. Les ventes ne sont jamais allégées."),
+        ["slider.thin"] =A("Thin out history after (days)", "Verlauf ausdünnen nach (Tagen)", "Alléger l'historique après (jours)"),
         ["section.paths"] = A("Storage locations", "Speicherorte", "Emplacements de stockage"),
         ["paths.help"] = A(
             "Leave empty for the default folder. When you pick a new data folder, your current data is copied there; if a ledger.json already exists there, it is loaded instead. Dalamud's small settings file always stays in the Dalamud folder.",
@@ -327,6 +385,7 @@ internal static class L
     public static string ItemName(string? name) =>
         string.IsNullOrEmpty(name) ? T("unknown.item")
         : name == "@repair" ? T("src.Repair")
+        : name == "@other" ? T("src.Other")
         : name.StartsWith("@retainer:") ? $"{T("name.retainer")}: {name.Substring("@retainer:".Length)}"
         : name;
 

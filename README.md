@@ -12,11 +12,17 @@ Languages: English, Deutsch, Français (automatic from Dalamud's language, chang
 - **Items:** per-item statistics (revenue, quantity, average prices, profit)
 - **Retainers:** one card per retainer with gil, income in the chosen period and last income.
   Retainer sales are detected from the retainer's gil increasing (read-only, no item names available).
-- **NPC shops and repairs:** purchases/sales at NPC vendors and repair costs are tracked as expenses/income.
+- **NPC shops, market board purchases:** purchases/sales at NPC vendors and market board purchases are detected
+  from gil changes while the matching window is open (read-only).
+- **Expenses & other:** repairs plus every other gil change (quests, mail, trades, items …) in its own tab.
+  Moves to/from retainers are recognised and ignored. Other gil is not part of revenue/profit.
+- **Today:** the daily gil change survives relogs (it only resets on a new day).
 - **Market price tooltip:** hovering an item shows prices from [Universalis](https://universalis.app)
   (lowest price NQ/HQ, averages, sales per day) or "Not tradable", plus your own average sale price.
   Price source selectable: own world, own data center, all of Europe or a custom world/DC/region.
-  For wide sources it also shows the price on your own world and how much you would save.
+  The home world is fixed (setting, or your character's home world) and does not change when you visit another world.
+  For other sources it adds a block for your home world (NQ and HQ separately) and compares the quality of the
+  hovered item: cheaper elsewhere, resale margin, or "you'd be the only seller".
   Results cached for 5 minutes.
 - **Data protection:** option to never delete sales data (on by default) plus a daily backup of `ledger.json`.
 - **Multiple characters:** filter per character or "All"

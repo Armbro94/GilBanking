@@ -6,7 +6,7 @@ namespace GilBanking;
 [Serializable]
 public sealed class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = 2;
 
     /// <summary>Verkäufe/Einkäufe aus Systemnachrichten im Chat erkennen.</summary>
     public bool TrackChatSales { get; set; } = true;
@@ -22,6 +22,15 @@ public sealed class Configuration : IPluginConfiguration
 
     /// <summary>Reparaturkosten (Gil-Änderung bei offenem Reparaturfenster) erfassen.</summary>
     public bool TrackRepairs { get; set; } = true;
+
+    /// <summary>Käufe am Marktbrett (Gil sinkt bei offenem Marktbrett-Fenster) erfassen.</summary>
+    public bool TrackMarketBuys { get; set; } = true;
+
+    /// <summary>Alle übrigen Gil-Änderungen (Quests, Post, Handel, Gegenstände …) als "Sonstiges" erfassen.</summary>
+    public bool TrackOtherGil { get; set; } = true;
+
+    /// <summary>Feste Heimatwelt für den Preisvergleich. Leer = Heimatwelt des eingeloggten Charakters.</summary>
+    public string HomeWorld { get; set; } = "";
 
     /// <summary>Gil-Einnahmen der Retainer (Marktbrett-Verkäufe) erfassen.</summary>
     public bool TrackRetainerSales { get; set; } = true;
@@ -64,6 +73,9 @@ public sealed class Configuration : IPluginConfiguration
     public int SaveIntervalMinutes { get; set; } = 10;
 
     public int SnapshotIntervalSeconds { get; set; } = 30;
+
+    /// <summary>Alten Gil-Verlauf ausdünnen. Aus = der komplette Verlauf bleibt dauerhaft erhalten.</summary>
+    public bool ThinHistory { get; set; } = false;
 
     /// <summary>Gil-Verlauf wird nach dieser Zeit ausgedünnt (ein Punkt pro Tag).</summary>
     public int ThinAfterDays { get; set; } = 30;

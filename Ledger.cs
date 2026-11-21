@@ -150,6 +150,7 @@ public sealed class Ledger
         Entries = new List<LedgerEntry>(Data.Entries),
         Snapshots = Data.Snapshots.ToDictionary(k => k.Key, v => new List<GilSnapshot>(v.Value)),
         Retainers = Data.Retainers.ToDictionary(k => k.Key, v => new Dictionary<string, long>(v.Value)),
+        Sessions = Data.Sessions.ToDictionary(k => k.Key, v => new DaySession { Day = v.Value.Day, StartGil = v.Value.StartGil }),
     };
 
     private void Write(LedgerData copy, string target)
@@ -276,8 +277,66 @@ public sealed class Ledger
 
     // ---------- Schreiben ----------
 
+    private (DateTime At, string Character, uint Id, string Name, bool Hq, int Qty)? pendingDetail;
+
+    /// <summary>
+    /// Item und Menge eines Marktbrett-Kaufs aus der Chat-Meldung. Passt ein erkannter Kauf ohne Namen, wird er ergänzt,
+    /// sonst wird die Angabe kurz für den gleich folgenden Kauf gemerkt.
+    /// </summary>
+    public void AttachPurchaseDetails(string character, uint id, string name, bool hq, int qty)
+    {
+        for (var i = Data.Entries.Count - 1; i >= 0 && i >= Data.Entries.Count - 30; i--)
+        {
+            var o = Data.Entries[i];
+            if (o.Kind != EntryKind.Purchase || o.Source != "Market" || !string.IsNullOrEmpty(o.ItemName)) continue;
+            if (o.Character != character || (DateTime.UtcNow - o.TimeUtc).TotalSeconds > 15) continue;
+
+            o.ItemId = id;
+            o.ItemName = name;
+            o.IsHq = hq;
+            o.Quantity = Math.Max(1, qty);
+            MarkDirty();
+            return;
+        }
+        pendingDetail = (DateTime.UtcNow, character, id, name, hq, qty);
+    }
+
     public void AddEntry(LedgerEntry e)
     {
+        if (e.Source == "Market" && string.IsNullOrEmpty(e.ItemName) &&
+            pendingDetail is { } p && p.Character == e.Character && (DateTime.UtcNow - p.At).TotalSeconds <= 15)
+        {
+            e.ItemId = p.Id;
+            e.ItemName = p.Name;
+            e.IsHq = p.Hq;
+            e.Quantity = Math.Max(1, p.Qty);
+            pendingDetail = null;
+        }
+
+        // Ein Marktbrett-Kauf wird zweimal erkannt (Gil-Änderung und Chat-Nachricht): zu einem Eintrag zusammenführen.
+        if (e.Kind == EntryKind.Purchase && (e.Source == "Chat" || e.Source == "Market") && e.TotalGil > 0)
+        {
+            for (var i = Data.Entries.Count - 1; i >= 0 && i >= Data.Entries.Count - 30; i--)
+            {
+                var o = Data.Entries[i];
+                if (o.Kind != EntryKind.Purchase || o.Source == e.Source) continue;
+                if (o.Source != "Chat" && o.Source != "Market") continue;
+                if (o.Character != e.Character || o.TotalGil != e.TotalGil) continue;
+                if (Math.Abs((e.TimeUtc - o.TimeUtc).TotalSeconds) > 15) continue;
+
+                if (string.IsNullOrEmpty(o.ItemName) && !string.IsNullOrEmpty(e.ItemName))
+                {
+                    o.ItemId = e.ItemId;
+                    o.ItemName = e.ItemName;
+                    o.IsHq = e.IsHq;
+                    o.Quantity = e.Quantity;
+                }
+                o.Source = "Market";
+                MarkDirty();
+                return;
+            }
+        }
+
         Data.Entries.Add(e);
         MarkDirty();
     }
@@ -294,6 +353,19 @@ public sealed class Ledger
             Data.Snapshots[character] = list = new List<GilSnapshot>();
         list.Add(new GilSnapshot { TimeUtc = DateTime.UtcNow, Gil = gil, RetainerGil = retainerGil });
         MarkDirty();
+    }
+
+    /// <summary>
+    /// Gil-Stand zu Beginn des heutigen Tages. Beim ersten Aufruf des Tages wird der aktuelle Stand gemerkt,
+    /// ein Relog startet also keine neue Sitzung.
+    /// </summary>
+    public long DayStart(string character, long gilNow)
+    {
+        var today = DateTime.Now.ToString("yyyy-MM-dd");
+        if (Data.Sessions.TryGetValue(character, out var s) && s.Day == today) return s.StartGil;
+        Data.Sessions[character] = new DaySession { Day = today, StartGil = gilNow };
+        MarkDirty();
+        return gilNow;
     }
 
     public void SetRetainers(string character, Dictionary<string, long> retainers)
@@ -356,7 +428,7 @@ public sealed class Ledger
         int sc = 0, pc = 0;
         foreach (var e in Data.Entries)
         {
-            if (e.TimeUtc < fromUtc || !Match(ch, e.Character)) continue;
+            if (e.TimeUtc < fromUtc || !Match(ch, e.Character) || e.Source == "Other") continue;
             if (e.Kind == EntryKind.Sale) { sales += e.TotalGil; sc++; }
             else { purch += e.TotalGil; pc++; }
         }
@@ -372,7 +444,7 @@ public sealed class Ledger
         // Ein Durchlauf über alle Einträge statt einem pro Tag.
         foreach (var e in Data.Entries)
         {
-            if (!Match(ch, e.Character)) continue;
+            if (!Match(ch, e.Character) || e.Source == "Other") continue;
             var idx = (int)(e.TimeUtc.ToLocalTime().Date - today).TotalDays + days - 1;
             if (idx < 0 || idx >= days) continue;
             if (e.Kind == EntryKind.Sale) sales[idx] += e.TotalGil; else purch[idx] += e.TotalGil;
@@ -390,6 +462,7 @@ public sealed class Ledger
         foreach (var e in Data.Entries.OrderBy(e => e.TimeUtc))
         {
             if (e.TimeUtc < fromUtc || !Match(ch, e.Character)) continue;
+            if (e.IsExpenseEntry || e.Source == "Retainer") continue; // Reparatur, Sonstiges, Retainer-Pauschalen sind keine Items
             var key = e.ItemId != 0 ? "#" + e.ItemId : e.ItemName;
             if (!map.TryGetValue(key, out var st))
                 map[key] = st = new ItemStat { Key = key, ItemId = e.ItemId };
@@ -442,6 +515,24 @@ public sealed class Ledger
             r += s.RetainerGil;
         }
         return (g, r);
+    }
+
+    /// <summary>Summen der Ausgaben-Einträge (Reparatur, sonstige Ausgaben, sonstige Einnahmen) im Zeitraum.</summary>
+    public (long Repair, int RepairCount, long OtherOut, int OtherOutCount, long OtherIn, int OtherInCount) GetExpenseTotals(string? ch, DateTime fromUtc)
+    {
+        long rep = 0, oo = 0, oi = 0;
+        int rc = 0, ooc = 0, oic = 0;
+        foreach (var e in Data.Entries)
+        {
+            if (!e.IsExpenseEntry || e.TimeUtc < fromUtc || !Match(ch, e.Character)) continue;
+            if (e.Source == "Other")
+            {
+                if (e.Kind == EntryKind.Sale) { oi += e.TotalGil; oic++; }
+                else { oo += e.TotalGil; ooc++; }
+            }
+            else { rep += e.TotalGil; rc++; }
+        }
+        return (rep, rc, oo, ooc, oi, oic);
     }
 
     public long RetainerTotal(string character) =>

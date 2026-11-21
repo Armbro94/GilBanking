@@ -50,12 +50,21 @@ public sealed class Plugin : IDalamudPlugin
             config.TooltipUseDataCenter = false;
             config.Save();
         }
+        if (config.Version < 2)
+        {
+            // Ab 0.0.0.4 bleibt der komplette Gil-Verlauf standardmäßig erhalten.
+            config.ThinHistory = false;
+            config.Version = 2;
+            config.Save();
+        }
+        Worlds.Init(dataManager);
+
         ledger = new Ledger(pluginInterface.GetPluginConfigDirectory(), config.DataDirectory, config.ExportDirectory)
         {
             SaveIntervalMinutes = config.SaveIntervalMinutes,
         };
         ledger.ProtectSales = config.KeepSalesForever;
-        ledger.Thin(config.ThinAfterDays);
+        if (config.ThinHistory) ledger.Thin(config.ThinAfterDays);
 
         tracker = new GilTracker(framework, objectTable, gameGui, dataManager, ledger, config);
         chatTracker = new ChatTracker(chatGui, dataManager, ledger, config, () => tracker.CharacterKey);

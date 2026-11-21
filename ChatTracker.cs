@@ -163,13 +163,18 @@ public sealed class ChatTracker : IDisposable
 
     private void Handle(XivChatType type, SeString message)
     {
+        var text = message.TextValue;
+        var m = GilRegex.Match(text);
+        if (!m.Success)
+        {
+            // Marktbrett-Kauf: "Du hast 99 Stücke X gekauft." nennt keinen Preis, aber Item und Menge.
+            HandlePurchaseDetails(type, message, text);
+            return;
+        }
+
         // Marktbrett-Meldungen kommen als Systemnachrichten; Echo erlaubt Tests mit /echo.
         if (type != XivChatType.SystemMessage && type != XivChatType.Notice && type != XivChatType.Echo)
             return;
-
-        var text = message.TextValue;
-        var m = GilRegex.Match(text);
-        if (!m.Success) return;
 
         if (config.DebugChat)
         {
@@ -226,6 +231,40 @@ public sealed class ChatTracker : IDisposable
             Character = characterKey() ?? L.T("unknown.char"),
             Source = "Chat",
         });
+    }
+
+    private void HandlePurchaseDetails(XivChatType type, SeString message, string text)
+    {
+        if (!config.TrackChatSales || !config.TrackMarketBuys) return;
+
+        // Spieler-Chat (Say, Party, Linkshell, FC …) ignorieren, damit niemand einen Kauf "vortäuschen" kann.
+        var t = (int)type;
+        if ((t >= 10 && t <= 37) || (t >= 101 && t <= 107)) return;
+        if (!ContainsAny(text.ToLowerInvariant(), config.PurchaseKeywords)) return;
+
+        var payload = message.Payloads.OfType<ItemPayload>().FirstOrDefault();
+        if (payload == null) return;
+
+        var id = payload.ItemId;
+        var hq = payload.IsHQ;
+        if (id > 1_000_000) { id -= 1_000_000; hq = true; }
+        else if (id > 500_000) id -= 500_000;
+
+        var name = "";
+        var sheet = data.GetExcelSheet<Item>();
+        if (sheet != null && sheet.TryGetRow(id, out var row))
+            name = row.Name.ToString();
+        if (string.IsNullOrEmpty(name)) return;
+
+        var qty = 1;
+        var qm = System.Text.RegularExpressions.Regex.Match(text, @"\d[\d.,]*");
+        if (qm.Success)
+        {
+            var d = new string(qm.Value.Where(char.IsDigit).ToArray());
+            if (int.TryParse(d, out var q) && q > 0) qty = q;
+        }
+
+        ledger.AttachPurchaseDetails(characterKey() ?? L.T("unknown.char"), id, name, hq, qty);
     }
 
     private static bool ContainsAny(string lower, string keywords)

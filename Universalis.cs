@@ -25,6 +25,13 @@ public sealed class MarketInfo
     /// <summary>Günstigstes Angebot (bei Rechenzentrums-Abfrage mit Weltname).</summary>
     public double CheapestPrice { get; init; }
     public string CheapestWorld { get; init; } = "";
+
+    /// <summary>Günstigstes NQ- und HQ-Angebot im Abfragebereich (mit Welt), damit beide Qualitäten getrennt verglichen werden.</summary>
+    public double CheapestNqPrice { get; init; }
+    public string CheapestNqWorld { get; init; } = "";
+    public double CheapestHqPrice { get; init; }
+    public string CheapestHqWorld { get; init; } = "";
+
     public bool NoData { get; init; }
 }
 
@@ -108,10 +115,12 @@ public sealed class UniversalisClient : IDisposable
 
             double cheapest = 0;
             var cheapestWorld = "";
+            var cheapestIsHq = false;
             if (r.TryGetProperty("listings", out var ls) && ls.ValueKind == JsonValueKind.Array && ls.GetArrayLength() > 0)
             {
                 var l = ls[0];
                 cheapest = D(l, "pricePerUnit");
+                cheapestIsHq = l.TryGetProperty("hq", out var hqEl) && hqEl.ValueKind == JsonValueKind.True;
                 if (l.TryGetProperty("worldName", out var wn) && wn.ValueKind == JsonValueKind.String)
                     cheapestWorld = wn.GetString() ?? "";
             }
@@ -124,6 +133,30 @@ public sealed class UniversalisClient : IDisposable
             var minHq = D(r, "minPriceHQ");
             var avgSold = D(r, "averagePrice");
             var noData = minNq <= 0 && minHq <= 0 && cheapest <= 0 && avgSold <= 0;
+
+            // Günstigstes Angebot je Qualität (mit Welt).
+            double nqPrice = 0, hqPrice = 0;
+            var nqWorld = "";
+            var hqWorld = "";
+            if (cheapest > 0)
+            {
+                if (cheapestIsHq) { hqPrice = cheapest; hqWorld = cheapestWorld; }
+                else { nqPrice = cheapest; nqWorld = cheapestWorld; }
+            }
+
+            // Einzelne Welt: das Angebot der anderen Qualität liegt auf derselben Welt.
+            // Rechenzentrum/Region: das günstigste Angebot der anderen Qualität wird gezielt nachgefragt.
+            var singleWorld = string.Equals(cheapestWorld, scope, StringComparison.OrdinalIgnoreCase);
+            if (nqPrice <= 0 && minNq > 0)
+            {
+                if (singleWorld) { nqPrice = minNq; nqWorld = scope; }
+                else { (nqPrice, nqWorld) = await CheapestOfQuality(itemId, scope, false).ConfigureAwait(false); }
+            }
+            if (hqPrice <= 0 && minHq > 0)
+            {
+                if (singleWorld) { hqPrice = minHq; hqWorld = scope; }
+                else { (hqPrice, hqWorld) = await CheapestOfQuality(itemId, scope, true).ConfigureAwait(false); }
+            }
 
             return new MarketInfo
             {
@@ -139,6 +172,10 @@ public sealed class UniversalisClient : IDisposable
                 LastUpload = last,
                 CheapestPrice = cheapest,
                 CheapestWorld = cheapestWorld,
+                CheapestNqPrice = nqPrice,
+                CheapestNqWorld = nqWorld,
+                CheapestHqPrice = hqPrice,
+                CheapestHqWorld = hqWorld,
             };
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested) { throw; }
@@ -146,6 +183,32 @@ public sealed class UniversalisClient : IDisposable
         {
             return new MarketInfo { ItemId = itemId, Scope = scope, Ok = false, Error = ex.Message };
         }
+    }
+
+    /// <summary>Günstigstes Angebot einer bestimmten Qualität im Abfragebereich (Preis und Welt).</summary>
+    private async Task<(double Price, string World)> CheapestOfQuality(uint itemId, string scope, bool hq)
+    {
+        try
+        {
+            var url = $"https://universalis.app/api/v2/{Uri.EscapeDataString(scope)}/{itemId}?listings=1&entries=0&hq={(hq ? "true" : "false")}";
+            using var resp = await http.GetAsync(url, cts.Token).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode) return (0, "");
+
+            var json = await resp.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("listings", out var ls) && ls.ValueKind == JsonValueKind.Array && ls.GetArrayLength() > 0)
+            {
+                var l = ls[0];
+                var world = l.TryGetProperty("worldName", out var wn) && wn.ValueKind == JsonValueKind.String
+                    ? wn.GetString() ?? ""
+                    : "";
+                return (D(l, "pricePerUnit"), world);
+            }
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { throw; }
+        catch { /* die zweite Abfrage ist optional */ }
+
+        return (0, "");
     }
 
     private static double D(JsonElement e, string name) =>

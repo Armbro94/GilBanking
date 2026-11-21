@@ -25,6 +25,23 @@ public sealed unsafe class GilTracker : IDisposable
         "FreeCompanyChest", "RetainerList",
     };
 
+    /// <summary>
+    /// Fenster, die laufend beobachtet werden. Wie bei GilDelta zählt ein Fenster auch noch ca. 2 Sekunden nach dem Schließen,
+    /// weil sich Gil-Änderung und Fensterwechsel zeitlich überschneiden können.
+    /// </summary>
+    private static readonly string[] WatchedAddons =
+    {
+        "Shop", "InclusionShop", "Repair", "ItemSearch", "ItemSearchResult", "Bank", "FreeCompanyChest",
+    };
+
+    private static readonly TimeSpan AddonWindow = TimeSpan.FromSeconds(2);
+
+    private readonly Dictionary<string, DateTime> addonSeen = new();
+
+    // Sonstige Gil-Änderungen warten kurz, ob eine Retainer-Bewegung dazu passt (Ein-/Auszahlung).
+    private readonly List<(long Delta, DateTime At, string Note)> pendingOther = new();
+    private readonly List<(long Signed, DateTime At)> retainerMoves = new();
+
     private readonly IFramework framework;
     private readonly IObjectTable objectTable;
     private readonly IGameGui gameGui;
@@ -119,15 +136,20 @@ public sealed unsafe class GilTracker : IDisposable
             }
             zeroStrikes = 0;
 
+            // Beim Login kann kurz 0 gelesen werden: Der Tagesstartwert darf nie aus so einem Wert entstehen.
+            if (gil == 0 && !HasSession) return;
+
             var ret = ReadRetainers(key);
 
             if (!HasSession || key != CharacterKey)
             {
                 CharacterKey = key;
-                SessionStartGil = gil;
                 HasSession = true;
                 lastGil = lastRet = -1;
             }
+
+            // "Heute": der Startwert des Tages bleibt bei Relog erhalten und wird erst bei einem neuen Tag zurückgesetzt.
+            SessionStartGil = ledger.DayStart(key, gil);
 
             CurrentGil = gil;
 
@@ -157,8 +179,12 @@ public sealed unsafe class GilTracker : IDisposable
         if (objectTable.LocalPlayer == null)
         {
             fastLast = -1;
+            pendingOther.Clear();
             return;
         }
+
+        PollAddons(now);
+        ProcessPendingOther(now);
 
         if (now >= nextRetainer)
         {
@@ -186,10 +212,14 @@ public sealed unsafe class GilTracker : IDisposable
 
     private void OnGilChanged(long delta)
     {
-        var open = CandidateAddons.Where(IsAddonVisible).ToList();
+        var now = DateTime.UtcNow;
+        var open = OpenAddons(now);
         var hovered = NormalizeItemId(gameGui.HoveredItem);
 
-        recentGil.Insert(0, $"{(delta > 0 ? "+" : "")}{delta:N0} | {(open.Count > 0 ? string.Join(", ", open) : "-")} | item {hovered}");
+        // Für die Fehlersuche: zusätzlich alle weiteren bekannten Fenster, die gerade offen sind.
+        var visibleNow = CandidateAddons.Where(IsAddonVisible).ToList();
+        var shown = open.Union(visibleNow).ToList();
+        recentGil.Insert(0, $"{(delta > 0 ? "+" : "")}{delta:N0} | {(shown.Count > 0 ? string.Join(", ", shown) : "-")} | item {hovered}");
         if (recentGil.Count > 30) recentGil.RemoveAt(recentGil.Count - 1);
 
         var key = CharacterKey ?? CurrentKey();
@@ -219,8 +249,10 @@ public sealed unsafe class GilTracker : IDisposable
         }
 
         // NPC-Händler: Kauf (Gil sinkt) oder Verkauf an den Händler (Gil steigt).
-        if (open.Contains("Shop") && config.TrackNpcShop)
+        if (open.Contains("Shop") || open.Contains("InclusionShop"))
         {
+            if (!config.TrackNpcShop) return;
+
             uint itemId = 0;
             var name = "";
             var qty = 1;
@@ -248,7 +280,83 @@ public sealed unsafe class GilTracker : IDisposable
                 Character = key,
                 Source = "NPC",
             });
+            return;
         }
+
+        // Marktbrett-Kauf: Gil sinkt, während die Marktbrett-Suche offen ist.
+        if (delta < 0 && (open.Contains("ItemSearch") || open.Contains("ItemSearchResult")))
+        {
+            if (config.TrackMarketBuys)
+            {
+                ledger.AddEntry(new LedgerEntry
+                {
+                    Kind = EntryKind.Purchase,
+                    Quantity = 1,
+                    TotalGil = total,
+                    Character = key,
+                    Source = "Market",
+                });
+            }
+            return;
+        }
+
+        // Retainer-Gil-Fenster und FC-Kasse: reine Umbuchungen, keine Einnahme/Ausgabe.
+        if (open.Contains("Bank") || open.Contains("FreeCompanyChest")) return;
+
+        // Alles andere (Quests, Post, Handel, Gegenstände …): kurz warten, ob eine Retainer-Bewegung dazu passt, dann als "Sonstiges" erfassen.
+        if (config.TrackOtherGil)
+            pendingOther.Add((delta, now, shown.Count > 0 ? string.Join(", ", shown) : ""));
+    }
+
+    private void ProcessPendingOther(DateTime now)
+    {
+        if (pendingOther.Count == 0) return;
+        retainerMoves.RemoveAll(m => (now - m.At).TotalSeconds > 30);
+
+        for (var i = pendingOther.Count - 1; i >= 0; i--)
+        {
+            var p = pendingOther[i];
+            if ((now - p.At).TotalSeconds < 2.2) continue;
+            pendingOther.RemoveAt(i);
+
+            // Passende Gegenbewegung beim Retainer (Ein-/Auszahlung) = Umbuchung.
+            var idx = retainerMoves.FindIndex(m => m.Signed == -p.Delta && Math.Abs((m.At - p.At).TotalSeconds) <= 6);
+            if (idx >= 0)
+            {
+                retainerMoves.RemoveAt(idx);
+                continue;
+            }
+
+            var key = CharacterKey ?? CurrentKey();
+            if (key == null) continue;
+
+            ledger.AddEntry(new LedgerEntry
+            {
+                Kind = p.Delta > 0 ? EntryKind.Sale : EntryKind.Purchase,
+                ItemName = "@other",
+                Quantity = 1,
+                TotalGil = Math.Abs(p.Delta),
+                Character = key,
+                Source = "Other",
+                Note = p.Note,
+            });
+        }
+    }
+
+    // ---------- Fenster-Beobachtung ----------
+
+    private void PollAddons(DateTime now)
+    {
+        foreach (var name in WatchedAddons)
+            if (IsAddonVisible(name)) addonSeen[name] = now;
+    }
+
+    private List<string> OpenAddons(DateTime now)
+    {
+        var list = new List<string>();
+        foreach (var kv in addonSeen)
+            if (now - kv.Value <= AddonWindow) list.Add(kv.Key);
+        return list;
     }
 
     private static uint NormalizeItemId(ulong raw)
@@ -307,16 +415,31 @@ public sealed unsafe class GilTracker : IDisposable
     /// </summary>
     private void CheckRetainerIncome(string key, Dictionary<string, long> current)
     {
-        if (!config.TrackRetainerSales) return;
         if (!ledger.Data.Retainers.TryGetValue(key, out var previous)) return;
 
-        var bank = IsAddonVisible("Bank");
+        var now = DateTime.UtcNow;
+        var bank = IsAddonVisible("Bank") || OpenAddons(now).Contains("Bank");
         foreach (var kv in current)
         {
-            if (!previous.TryGetValue(kv.Key, out var before) || kv.Value <= before) continue;
+            if (!previous.TryGetValue(kv.Key, out var before) || kv.Value == before) continue;
 
             var delta = kv.Value - before;
-            if (bank || TakeMatchingOutflow(delta)) continue;
+
+            // Auszahlung: der Charakter bekommt kurz danach denselben Betrag (wird dort als Umbuchung erkannt).
+            if (delta < 0)
+            {
+                retainerMoves.Add((delta, now));
+                continue;
+            }
+
+            // Einzahlung (Gil-Fenster offen oder passende Ausgabe des Charakters kurz vorher): keine Einnahme.
+            if (bank || TakeMatchingOutflow(delta))
+            {
+                retainerMoves.Add((delta, now));
+                continue;
+            }
+
+            if (!config.TrackRetainerSales) continue;
 
             ledger.AddEntry(new LedgerEntry
             {
