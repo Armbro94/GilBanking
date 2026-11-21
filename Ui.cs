@@ -58,6 +58,34 @@ internal static class Ui
         ImGui.Dummy(size);
     }
 
+    // ---------- Retainer-Karte ----------
+
+    /// <summary>Kleines Kästchen pro Retainer: Name, Gil-Stand, Einnahmen im Zeitraum und letzte Einnahme.</summary>
+    public static void RetainerCard(string name, string sub, string gil, string line1, Vector4 line1Color, string line2, float width)
+    {
+        var s = ImGuiHelpers.GlobalScale;
+        var dl = ImGui.GetWindowDrawList();
+        var p = ImGui.GetCursorScreenPos();
+        var size = new Vector2(width, 108 * s);
+
+        dl.AddRectFilled(p, p + size, U(CardBg), 8 * s);
+        dl.AddRectFilled(p, new Vector2(p.X + 4 * s, p.Y + size.Y), U(Accent), 8 * s, ImDrawFlags.RoundCornersLeft);
+
+        dl.AddText(p + new Vector2(14 * s, 8 * s), U(Text), name);
+        if (sub.Length > 0)
+        {
+            var subPos = new Vector2(p.X + size.X - 10 * s - ImGui.CalcTextSize(sub).X, p.Y + 8 * s);
+            dl.AddText(subPos, U(Dim), sub);
+        }
+
+        dl.AddText(ImGui.GetFont(), ImGui.GetFontSize() * 1.4f, p + new Vector2(14 * s, 30 * s), U(Gold), gil + " Gil");
+        dl.AddText(p + new Vector2(14 * s, 66 * s), U(line1Color), line1);
+        if (line2.Length > 0)
+            dl.AddText(p + new Vector2(14 * s, 84 * s), U(Dim), line2);
+
+        ImGui.Dummy(size);
+    }
+
     // ---------- Liniendiagramm ----------
 
     public static void LineChart(string id, IReadOnlyList<(DateTime T, double V)> pts, float height, Vector4 color)

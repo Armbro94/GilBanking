@@ -12,6 +12,8 @@ namespace GilBanking;
 /// Zeigt neben dem Mauszeiger ein kleines Fenster mit dem Marktwert (Universalis), solange ein Item
 /// im Spiel mit der Maus anvisiert wird. Rein lesend: es wird nur gelesen, welches Item gerade unter
 /// dem Mauszeiger liegt.
+/// Preisquelle wählbar: eigene Welt, eigenes Rechenzentrum, ganz Europa oder eigene Eingabe.
+/// Bei weiter Quelle wird zusätzlich der Preis der eigenen Welt gezeigt und die mögliche Ersparnis.
 /// </summary>
 public sealed class ItemTooltip
 {
@@ -53,6 +55,24 @@ public sealed class ItemTooltip
         }
     }
 
+    /// <summary>Abfrage-Bereich laut Einstellung. Bei Europa/Eigene Eingabe ist kein eingeloggter Charakter nötig.</summary>
+    private string? ResolveScope(string? world, string? dc)
+    {
+        return config.TooltipScopeMode switch
+        {
+            1 => dc ?? world,
+            2 => "Europe",
+            3 => string.IsNullOrWhiteSpace(config.TooltipCustomScope) ? world : config.TooltipCustomScope.Trim(),
+            _ => world,
+        };
+    }
+
+    private static double LowestPrice(MarketInfo m)
+    {
+        if (m.MinNq > 0 && m.MinHq > 0) return Math.Min(m.MinNq, m.MinHq);
+        return Math.Max(m.MinNq, m.MinHq);
+    }
+
     private void DrawInternal()
     {
         var raw = gameGui.HoveredItem;
@@ -82,22 +102,30 @@ public sealed class ItemTooltip
         var tradable = row.ItemSearchCategory.RowId != 0 && !row.IsUntradable;
         var canHq = row.CanBeHq;
 
-        string? scope = null;
+        string? world = null;
+        string? dc = null;
         var player = objectTable.LocalPlayer;
         if (player != null)
         {
-            var world = player.CurrentWorld.ValueNullable;
-            if (world != null)
+            var w = player.CurrentWorld.ValueNullable;
+            if (w != null)
             {
-                scope = config.TooltipUseDataCenter
-                    ? world.Value.DataCenter.ValueNullable?.Name.ToString()
-                    : world.Value.Name.ToString();
+                world = w.Value.Name.ToString();
+                dc = w.Value.DataCenter.ValueNullable?.Name.ToString();
             }
         }
 
+        var scope = ResolveScope(world, dc);
+        var wide = scope != null && !string.Equals(scope, world, StringComparison.OrdinalIgnoreCase);
+
         MarketInfo? info = null;
+        MarketInfo? home = null;
         if (tradable && !string.IsNullOrEmpty(scope))
+        {
             info = market.Get(id, scope);
+            if (wide && config.TooltipCompareHome && !string.IsNullOrEmpty(world))
+                home = market.Get(id, world);
+        }
 
         var s = ImGuiHelpers.GlobalScale;
         var pos = ImGui.GetMousePos() + new Vector2(config.TooltipOffsetX, config.TooltipOffsetY) * s;
@@ -148,13 +176,15 @@ public sealed class ItemTooltip
                 ImGui.TextColored(Ui.Dim, L.F("tip.board", scope));
                 PriceLine(L.T("tip.minNq"), info.MinNq);
                 if (canHq) PriceLine(L.T("tip.minHq"), info.MinHq);
-                if (config.TooltipUseDataCenter && info.CheapestPrice > 0)
+
+                if (wide && info.CheapestPrice > 0)
                 {
                     var w = string.IsNullOrEmpty(info.CheapestWorld) ? "" : $" ({info.CheapestWorld})";
                     ImGui.Text(L.T("tip.cheapest"));
                     ImGui.SameLine();
                     ImGui.TextColored(Ui.Good, $"{Ui.Gil((long)info.CheapestPrice)} Gil{w}");
                 }
+
                 PriceLine(L.T("tip.avgCur"), info.AvgCurrent);
                 PriceLine(L.T("tip.avgSold"), info.AvgSold);
 
@@ -166,6 +196,39 @@ public sealed class ItemTooltip
                 }
                 if (info.LastUpload != null)
                     ImGui.TextColored(Ui.Dim, L.F("tip.updated", Age(info.LastUpload.Value)));
+
+                // Vergleich mit der eigenen Welt: wo ist es günstiger?
+                if (wide && config.TooltipCompareHome && !string.IsNullOrEmpty(world))
+                {
+                    ImGui.Separator();
+                    if (home == null)
+                    {
+                        ImGui.TextColored(Ui.Dim, L.F("tip.loading", world));
+                    }
+                    else if (home.Ok && !home.NoData)
+                    {
+                        var homeLow = LowestPrice(home);
+                        ImGui.Text(L.F("tip.home", world));
+                        ImGui.SameLine();
+                        if (homeLow > 0) ImGui.TextColored(Ui.Gold, $"{Ui.Gil((long)homeLow)} Gil");
+                        else ImGui.TextColored(Ui.Dim, "–");
+
+                        if (info.CheapestPrice > 0 && homeLow > 0)
+                        {
+                            if (info.CheapestPrice < homeLow)
+                            {
+                                var diff = homeLow - info.CheapestPrice;
+                                var pct = diff / homeLow * 100d;
+                                var cheapWorld = string.IsNullOrEmpty(info.CheapestWorld) ? scope : info.CheapestWorld;
+                                ImGui.TextColored(Ui.Good, L.F("tip.save", Ui.Gil((long)diff), pct.ToString("0", L.Culture), cheapWorld));
+                            }
+                            else
+                            {
+                                ImGui.TextColored(Ui.Dim, L.T("tip.homeBest"));
+                            }
+                        }
+                    }
+                }
             }
 
             if (ownCount > 0)
@@ -193,14 +256,7 @@ public sealed class ItemTooltip
         else ImGui.TextColored(Ui.Dim, "–");
     }
 
-    private static string Age(DateTime utc)
-    {
-        var d = DateTime.UtcNow - utc;
-        if (d.TotalMinutes < 1) return L.T("age.now");
-        if (d.TotalHours < 1) return L.F("age.min", (int)d.TotalMinutes);
-        if (d.TotalDays < 1) return L.F("age.hour", (int)d.TotalHours);
-        return L.F("age.day", (int)d.TotalDays);
-    }
+    private static string Age(DateTime utc) => L.Age(utc);
 
     private void CalcOwn(uint id)
     {

@@ -42,13 +42,22 @@ public sealed class Plugin : IDalamudPlugin
 
         config = pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         L.Update(config.Language, pluginInterface.UiLanguage);
+
+        if (config.TooltipUseDataCenter)
+        {
+            // Frühere Einstellung "ganzes Rechenzentrum" in die neue Auswahl der Preisquelle übernehmen.
+            config.TooltipScopeMode = 1;
+            config.TooltipUseDataCenter = false;
+            config.Save();
+        }
         ledger = new Ledger(pluginInterface.GetPluginConfigDirectory(), config.DataDirectory, config.ExportDirectory)
         {
             SaveIntervalMinutes = config.SaveIntervalMinutes,
         };
+        ledger.ProtectSales = config.KeepSalesForever;
         ledger.Thin(config.ThinAfterDays);
 
-        tracker = new GilTracker(framework, objectTable, ledger, config);
+        tracker = new GilTracker(framework, objectTable, gameGui, dataManager, ledger, config);
         chatTracker = new ChatTracker(chatGui, dataManager, ledger, config, () => tracker.CharacterKey);
 
         market = new UniversalisClient();

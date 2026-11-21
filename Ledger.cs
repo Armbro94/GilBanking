@@ -38,6 +38,9 @@ public sealed class Ledger
     /// <summary>Höchstens alle N Minuten wird auf die Festplatte geschrieben (nur bei Änderungen).</summary>
     public int SaveIntervalMinutes { get; set; } = 10;
 
+    /// <summary>Schutz: Verkaufsdaten werden nicht gelöscht (weder einzeln noch alle auf einmal).</summary>
+    public bool ProtectSales { get; set; } = true;
+
     public string DataDir => dataDir;
     public string ExportDir => string.IsNullOrWhiteSpace(exportDirCustom) ? Path.Combine(dataDir, "exports") : exportDirCustom;
     public string DefaultDir => defaultDir;
@@ -115,7 +118,22 @@ public sealed class Ledger
         {
             Plugin.Log.Error(ex, "ledger.json konnte nicht gelesen werden – Sicherung wird angelegt.");
             try { File.Copy(path, path + ".broken", true); } catch { /* ignorieren */ }
+
+            // Falls vorhanden, die letzte Tagessicherung verwenden.
             Data = new LedgerData();
+            try
+            {
+                var bak = path + ".bak";
+                if (File.Exists(bak))
+                {
+                    Data = JsonSerializer.Deserialize<LedgerData>(File.ReadAllText(bak), JsonOpts) ?? new LedgerData();
+                    Plugin.Log.Warning("GilBanking: Daten aus ledger.json.bak wiederhergestellt.");
+                }
+            }
+            catch
+            {
+                Data = new LedgerData();
+            }
         }
         Revision++;
     }
@@ -138,6 +156,16 @@ public sealed class Ledger
     {
         lock (writeLock)
         {
+            // Höchstens einmal pro Tag eine Sicherung der bisherigen Datei anlegen.
+            try
+            {
+                var bak = target + ".bak";
+                if (File.Exists(target) &&
+                    (!File.Exists(bak) || (DateTime.UtcNow - File.GetLastWriteTimeUtc(bak)).TotalHours >= 24))
+                    File.Copy(target, bak, true);
+            }
+            catch { /* Sicherung ist optional */ }
+
             var tmp = target + ".tmp";
             File.WriteAllText(tmp, JsonSerializer.Serialize(copy, JsonOpts));
             File.Move(tmp, target, true);
@@ -256,6 +284,7 @@ public sealed class Ledger
 
     public void RemoveEntry(Guid id)
     {
+        if (ProtectSales) return;
         if (Data.Entries.RemoveAll(e => e.Id == id) > 0) MarkDirty();
     }
 
@@ -281,6 +310,7 @@ public sealed class Ledger
 
     public void ClearAll()
     {
+        if (ProtectSales) return;
         Data = new LedgerData();
         MarkDirty();
         SaveIfDue(true);

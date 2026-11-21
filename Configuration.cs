@@ -17,14 +17,35 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Schlüsselwörter (mit ; getrennt), die eine Nachricht als Einkauf markieren.</summary>
     public string PurchaseKeywords { get; set; } = "purchase;bought;gekauft;acheté;購入";
 
+    /// <summary>Käufe und Verkäufe beim NPC-Händler (Gil-Änderung bei offenem Händlerfenster) erfassen.</summary>
+    public bool TrackNpcShop { get; set; } = true;
+
+    /// <summary>Reparaturkosten (Gil-Änderung bei offenem Reparaturfenster) erfassen.</summary>
+    public bool TrackRepairs { get; set; } = true;
+
+    /// <summary>Gil-Einnahmen der Retainer (Marktbrett-Verkäufe) erfassen.</summary>
+    public bool TrackRetainerSales { get; set; } = true;
+
+    /// <summary>Schutz: Verkaufsdaten können nicht gelöscht werden (weder einzeln noch alle auf einmal).</summary>
+    public bool KeepSalesForever { get; set; } = true;
+
     /// <summary>Alle Systemnachrichten mit "Gil" für die Fehlersuche mitschreiben.</summary>
     public bool DebugChat { get; set; } = false;
 
     /// <summary>Marktpreis-Tooltip (Universalis) beim Hovern über Items anzeigen.</summary>
     public bool ShowMarketTooltip { get; set; } = true;
 
-    /// <summary>false = nur eigene Welt, true = ganzes Rechenzentrum.</summary>
+    /// <summary>Alte Einstellung (bis 0.2): wird beim Start in TooltipScopeMode übernommen und nicht mehr benutzt.</summary>
     public bool TooltipUseDataCenter { get; set; } = false;
+
+    /// <summary>Preisquelle fürs Tooltip: 0 = eigene Welt, 1 = eigenes Rechenzentrum, 2 = ganz Europa, 3 = eigene Eingabe.</summary>
+    public int TooltipScopeMode { get; set; } = 0;
+
+    /// <summary>Bei TooltipScopeMode 3: Welt, Rechenzentrum oder Region (z. B. "Odin", "Light", "Europe").</summary>
+    public string TooltipCustomScope { get; set; } = "";
+
+    /// <summary>Bei weiter Preisquelle zusätzlich den Preis der eigenen Welt zeigen und die Ersparnis ausrechnen.</summary>
+    public bool TooltipCompareHome { get; set; } = true;
 
     public int TooltipDelayMs { get; set; } = 250;
     public float TooltipOffsetX { get; set; } = -16f;

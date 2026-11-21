@@ -115,6 +115,76 @@ internal static class L
         ["kw.sale"] = A("Words for a sale (separate with ;)", "Wörter für Verkauf (mit ; trennen)", "Mots pour une vente (séparés par ;)"),
         ["kw.buy"] = A("Words for a purchase (separate with ;)", "Wörter für Einkauf (mit ; trennen)", "Mots pour un achat (séparés par ;)"),
         ["section.tracking"] = A("Tracking", "Tracking", "Suivi"),
+        ["chk.npc"] = A(
+            "Track NPC shop purchases and sales",
+            "Käufe und Verkäufe beim NPC-Händler erfassen",
+            "Suivre les achats et ventes chez les PNJ marchands"),
+        ["chk.repair"] = A("Track repair costs", "Reparaturkosten erfassen", "Suivre les frais de réparation"),
+        ["src.Chat"] = A("Chat", "Chat", "Chat"),
+        ["src.Manual"] = A("Manual", "Manuell", "Manuel"),
+        ["src.NPC"] = A("NPC shop", "NPC-Händler", "Marchand PNJ"),
+        ["src.Repair"] = A("Repair", "Reparatur", "Réparation"),
+        ["src.Retainer"] = A("Retainer", "Retainer", "Servant"),
+        ["name.retainer"] = A("Retainer sales", "Retainer-Verkäufe", "Ventes du servant"),
+        ["chk.retainer"] = A(
+            "Track retainer sales income",
+            "Einnahmen der Retainer-Verkäufe erfassen",
+            "Suivre les revenus des ventes des servants"),
+
+        // ---- Retainer-Tab ----
+        ["tab.retainers"] = A("Retainers", "Retainer", "Servants"),
+        ["ret.empty"] = A(
+            "No retainer data yet – open your summoning bell once so the game loads your retainers.",
+            "Noch keine Retainer-Daten – öffne einmal die Rufglocke, damit das Spiel deine Retainer lädt.",
+            "Pas encore de données – ouvrez une fois la sonnette pour que le jeu charge vos servants."),
+        ["ret.sumIncome"] = A("Income (period)", "Einnahmen (Zeitraum)", "Revenus (période)"),
+        ["ret.avg"] = A("Avg. per retainer", "Ø pro Retainer", "Moy. par servant"),
+        ["ret.count"] = A("{0} retainers", "{0} Retainer", "{0} servants"),
+        ["ret.income"] = A("Income in period: +{0} Gil", "Einnahmen im Zeitraum: +{0} Gil", "Revenus sur la période : +{0} Gil"),
+        ["ret.last"] = A("Last income: {0}", "Letzte Einnahme: {0}", "Dernier revenu : {0}"),
+        ["ret.none"] = A("No income recorded yet", "Noch keine Einnahmen erfasst", "Aucun revenu enregistré"),
+        ["ret.hint"] = A(
+            "Income is recorded when the game loads your retainers (open the summoning bell). The game doesn't tell which items were sold, so sales show up as one amount per retainer and visit.",
+            "Einnahmen werden erfasst, wenn das Spiel deine Retainer lädt (Rufglocke öffnen). Welche Items verkauft wurden, verrät das Spiel nicht, daher erscheint pro Retainer und Besuch ein Gesamtbetrag.",
+            "Les revenus sont enregistrés lorsque le jeu charge vos servants (ouvrir la sonnette). Le jeu n'indique pas quels objets ont été vendus : chaque servant et chaque visite donne un montant global."),
+
+        // ---- Tooltip: Preisquelle ----
+        ["scope.label"] = A("Price source", "Preisquelle", "Source des prix"),
+        ["scope.world"] = A("My current world", "Meine aktuelle Welt", "Mon monde actuel"),
+        ["scope.dc"] = A("My data center", "Mein Rechenzentrum", "Mon centre de données"),
+        ["scope.eu"] = A("All of Europe", "Ganz Europa", "Toute l'Europe"),
+        ["scope.custom"] = A("Custom …", "Eigene Eingabe …", "Personnalisé …"),
+        ["scope.customHelp"] = A(
+            "World, data center or region, e.g. Odin, Light or Europe",
+            "Welt, Rechenzentrum oder Region, z. B. Odin, Light oder Europe",
+            "Monde, centre de données ou région, p. ex. Odin, Light ou Europe"),
+        ["chk.compare"] = A(
+            "Also show the price on my own world and how much I'd save",
+            "Zusätzlich Preis auf meiner Welt zeigen und wie viel ich spare",
+            "Afficher aussi le prix sur mon monde et l'économie réalisée"),
+        ["tip.home"] = A("Your world ({0})", "Deine Welt ({0})", "Votre monde ({0})"),
+        ["tip.save"] = A(
+            "Save {0} Gil (-{1}%) on {2}",
+            "Du sparst {0} Gil (-{1} %) auf {2}",
+            "Économisez {0} Gil (-{1} %) sur {2}"),
+        ["tip.homeBest"] = A(
+            "Your world is already the cheapest.",
+            "Deine Welt ist bereits am günstigsten.",
+            "Votre monde est déjà le moins cher."),
+
+        // ---- Schutz der Verkaufsdaten ----
+        ["chk.protect"] = A(
+            "Never delete sales data (protection)",
+            "Verkaufsdaten nie löschen (Schutz)",
+            "Ne jamais supprimer les données de vente (protection)"),
+        ["protect.help"] = A(
+            "While on, single entries and \"Delete all data\" are disabled, so your sales stay forever. A daily backup (ledger.json.bak) is kept as well.",
+            "Solange aktiv, sind Einzellöschen und \"Alle Daten löschen\" gesperrt, deine Verkäufe bleiben dauerhaft erhalten. Zusätzlich gibt es ein tägliches Backup (ledger.json.bak).",
+            "Tant que l'option est active, la suppression d'entrées et « Supprimer toutes les données » sont désactivées : vos ventes restent conservées. Une sauvegarde quotidienne (ledger.json.bak) est aussi conservée."),
+        ["debug.gil"] = A(
+            "Latest gil changes (amount | open windows | hovered item id):",
+            "Letzte Gil-Änderungen (Betrag | offene Fenster | Item-ID unter der Maus):",
+            "Dernières variations de gils (montant | fenêtres ouvertes | id de l'objet survolé) :"),
         ["slider.gilInterval"] = A("Gil check every (seconds)", "Gil-Abfrage alle (Sekunden)", "Lecture des gils toutes les (secondes)"),
         ["slider.thin"] = A("Thin out history after (days)", "Verlauf ausdünnen nach (Tagen)", "Alléger l'historique après (jours)"),
         ["section.paths"] = A("Storage locations", "Speicherorte", "Emplacements de stockage"),
@@ -253,6 +323,24 @@ internal static class L
     public static string F(string key, params object[] args) =>
         string.Format(Culture, T(key), args);
 
+    /// <summary>Anzeigename eines Eintrags; "@repair" ist die Markierung für Reparaturkosten.</summary>
     public static string ItemName(string? name) =>
-        string.IsNullOrEmpty(name) ? T("unknown.item") : name;
+        string.IsNullOrEmpty(name) ? T("unknown.item")
+        : name == "@repair" ? T("src.Repair")
+        : name.StartsWith("@retainer:") ? $"{T("name.retainer")}: {name.Substring("@retainer:".Length)}"
+        : name;
+
+    /// <summary>Wie lange etwas her ist, z. B. "vor 5 Min.".</summary>
+    public static string Age(DateTime utc)
+    {
+        var d = DateTime.UtcNow - utc;
+        if (d.TotalMinutes < 1) return T("age.now");
+        if (d.TotalHours < 1) return F("age.min", (int)d.TotalMinutes);
+        if (d.TotalDays < 1) return F("age.hour", (int)d.TotalHours);
+        return F("age.day", (int)d.TotalDays);
+    }
+
+    /// <summary>Anzeigename der Quelle eines Eintrags (Chat, Manual, NPC, Repair); Unbekanntes wird unverändert gezeigt.</summary>
+    public static string Source(string? source) =>
+        !string.IsNullOrEmpty(source) && Table.ContainsKey("src." + source) ? T("src." + source) : source ?? "";
 }
