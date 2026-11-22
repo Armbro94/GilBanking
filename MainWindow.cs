@@ -507,12 +507,13 @@ public sealed class MainWindow : Window
                                       ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp;
 
         Guid? toDelete = null;
-        if (ImGui.BeginTable("##gl_exp", 5, flags, new Vector2(0, ImGui.GetContentRegionAvail().Y)))
+        if (ImGui.BeginTable("##gl_exp", 6, flags, new Vector2(0, ImGui.GetContentRegionAvail().Y)))
         {
             ImGui.TableSetupScrollFreeze(0, 1);
             ImGui.TableSetupColumn(L.T("col.time"), ImGuiTableColumnFlags.WidthFixed, 125 * s);
             ImGui.TableSetupColumn(L.T("col.type"), ImGuiTableColumnFlags.WidthStretch, 2f);
             ImGui.TableSetupColumn(L.T("col.total"), ImGuiTableColumnFlags.WidthFixed, 115 * s);
+            ImGui.TableSetupColumn(L.T("col.details"), ImGuiTableColumnFlags.WidthStretch, 4f);
             ImGui.TableSetupColumn(L.T("col.char"), ImGuiTableColumnFlags.WidthStretch, 1.6f);
             ImGui.TableSetupColumn("##del", ImGuiTableColumnFlags.WidthFixed, 28 * s);
             ImGui.TableHeadersRow();
@@ -529,9 +530,11 @@ public sealed class MainWindow : Window
                 ImGui.TableNextColumn();
                 var label = e.Source == "Other" ? (income ? L.T("exp.otherIn") : L.T("exp.otherOut")) : L.T("src.Repair");
                 ImGui.Text(label);
-                if (!string.IsNullOrEmpty(e.Note) && ImGui.IsItemHovered()) ImGui.SetTooltip(e.Note);
                 ImGui.TableNextColumn();
                 ImGui.TextColored(income ? Ui.Good : Ui.Bad, (income ? "+" : "-") + Ui.Gil(e.TotalGil));
+                ImGui.TableNextColumn();
+                ImGui.TextColored(Ui.Dim, e.Note ?? "");
+                if (!string.IsNullOrEmpty(e.Note) && ImGui.IsItemHovered()) ImGui.SetTooltip(e.Note);
                 ImGui.TableNextColumn();
                 ImGui.TextColored(Ui.Dim, e.Character);
                 ImGui.TableNextColumn();
@@ -806,6 +809,21 @@ public sealed class MainWindow : Window
             config.TooltipCompareHome = compare;
             config.Save();
         }
+        var avoid = config.TooltipAvoidGame;
+        if (ImGui.Checkbox(L.T("chk.avoid"), ref avoid))
+        {
+            config.TooltipAvoidGame = avoid;
+            config.Save();
+        }
+        var hideKey = config.TooltipHideKey;
+        ImGui.TextColored(Ui.Dim, L.T("tip.hideKey"));
+        ImGui.SameLine();
+        if (Combo("##gl_hidekey", 200 * s, new List<string> { L.T("hide.off"), "Alt", L.T("hide.ctrl"), L.T("hide.shift"), L.T("hide.ctrlShift") }, ref hideKey))
+        {
+            config.TooltipHideKey = hideKey;
+            config.Save();
+        }
+        ImGui.TextColored(Ui.Dim, L.T("tip.hideKeyHelp"));
         var delay = config.TooltipDelayMs;
         ImGui.SetNextItemWidth(260 * s);
         if (ImGui.SliderInt(L.T("slider.delay"), ref delay, 0, 1000))
@@ -838,6 +856,35 @@ public sealed class MainWindow : Window
             catch (Exception ex) { exportInfo = L.F("export.failed", ex.Message); }
         }
         if (exportInfo.Length > 0) ImGui.TextWrapped(exportInfo);
+
+        // Charaktere entfernen
+        ImGui.Spacing();
+        ImGui.TextColored(Ui.Accent, L.T("section.chars"));
+        ImGui.TextColored(Ui.Dim, L.T("chars.help"));
+        var known = ledger.Characters();
+        var current = tracker.CharacterKey;
+        string? removeChar = null;
+        foreach (var c in known)
+        {
+            ImGui.PushID("char_" + c);
+            ImGui.Text(c);
+            ImGui.SameLine();
+            var isCurrent = c == current;
+            ImGui.BeginDisabled(isCurrent);
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.55f, 0.18f, 0.18f, 1f));
+            if (ImGui.SmallButton(L.T("btn.removeChar")) && ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift)
+                removeChar = c;
+            ImGui.PopStyleColor();
+            ImGui.EndDisabled();
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip(isCurrent ? L.T("chars.current") : L.T("chars.tip"));
+            ImGui.PopID();
+        }
+        if (removeChar != null)
+        {
+            ledger.RemoveCharacter(removeChar);
+            if (charFilter == removeChar) charFilter = null;
+        }
 
         ImGui.Spacing();
         var protect = config.KeepSalesForever;

@@ -29,6 +29,12 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Alle übrigen Gil-Änderungen (Quests, Post, Handel, Gegenstände …) als "Sonstiges" erfassen.</summary>
     public bool TrackOtherGil { get; set; } = true;
 
+    /// <summary>Tooltip ausblenden, solange diese Tasten gehalten werden (0 aus, 1 Alt, 2 Strg, 3 Umschalt, 4 Strg+Umschalt).</summary>
+    public int TooltipHideKey { get; set; } = 0;
+
+    /// <summary>Dem Item-Tooltip des Spiels ausweichen, damit sich beide nicht überdecken.</summary>
+    public bool TooltipAvoidGame { get; set; } = true;
+
     /// <summary>Feste Heimatwelt für den Preisvergleich. Leer = Heimatwelt des eingeloggten Charakters.</summary>
     public string HomeWorld { get; set; } = "";
 

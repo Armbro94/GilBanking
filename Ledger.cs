@@ -301,6 +301,8 @@ public sealed class Ledger
         pendingDetail = (DateTime.UtcNow, character, id, name, hq, qty);
     }
 
+    private static bool IsMergeSource(string s) => s == "Chat" || s == "Market" || s == "NPC";
+
     public void AddEntry(LedgerEntry e)
     {
         if (e.Source == "Market" && string.IsNullOrEmpty(e.ItemName) &&
@@ -313,25 +315,33 @@ public sealed class Ledger
             pendingDetail = null;
         }
 
-        // Ein Marktbrett-Kauf wird zweimal erkannt (Gil-Änderung und Chat-Nachricht): zu einem Eintrag zusammenführen.
-        if (e.Kind == EntryKind.Purchase && (e.Source == "Chat" || e.Source == "Market") && e.TotalGil > 0)
+        // Dieselbe Buchung wird oft doppelt erkannt (Gil-Änderung beim Händler/Marktbrett und Chat-Meldung):
+        // zu einem Eintrag zusammenführen. Die Chat-Meldung liefert Item und Menge.
+        if (e.TotalGil > 0 && IsMergeSource(e.Source))
         {
             for (var i = Data.Entries.Count - 1; i >= 0 && i >= Data.Entries.Count - 30; i--)
             {
                 var o = Data.Entries[i];
-                if (o.Kind != EntryKind.Purchase || o.Source == e.Source) continue;
-                if (o.Source != "Chat" && o.Source != "Market") continue;
+                if (o.Paired || o.Kind != e.Kind || o.Source == e.Source || !IsMergeSource(o.Source)) continue;
                 if (o.Character != e.Character || o.TotalGil != e.TotalGil) continue;
                 if (Math.Abs((e.TimeUtc - o.TimeUtc).TotalSeconds) > 15) continue;
 
-                if (string.IsNullOrEmpty(o.ItemName) && !string.IsNullOrEmpty(e.ItemName))
+                var chat = e.Source == "Chat" ? e : o.Source == "Chat" ? o : null;
+                var from = chat != null && !string.IsNullOrEmpty(chat.ItemName) ? chat
+                         : string.IsNullOrEmpty(o.ItemName) && !string.IsNullOrEmpty(e.ItemName) ? e
+                         : null;
+                if (from != null && !ReferenceEquals(from, o))
                 {
-                    o.ItemId = e.ItemId;
-                    o.ItemName = e.ItemName;
-                    o.IsHq = e.IsHq;
-                    o.Quantity = e.Quantity;
+                    o.ItemId = from.ItemId;
+                    o.ItemName = from.ItemName;
+                    o.IsHq = from.IsHq;
+                    o.Quantity = Math.Max(1, from.Quantity);
                 }
-                o.Source = "Market";
+
+                // Die technisch erkannte Quelle (Marktbrett vor Händler) bleibt erhalten, nicht "Chat".
+                if (o.Source == "Chat") o.Source = e.Source;
+                else if (e.Source == "Market") o.Source = "Market";
+                o.Paired = true;
                 MarkDirty();
                 return;
             }
@@ -410,10 +420,21 @@ public sealed class Ledger
 
     // ---------- Lesen / Auswerten ----------
 
+    /// <summary>Entfernt alle Daten eines Charakters (Einträge, Gil-Verlauf, Retainer, Tagesstand).</summary>
+    public void RemoveCharacter(string character)
+    {
+        Data.Entries.RemoveAll(e => e.Character == character);
+        Data.Snapshots.Remove(character);
+        Data.Retainers.Remove(character);
+        Data.Sessions.Remove(character);
+        MarkDirty();
+    }
+
     public List<string> Characters()
     {
         return Data.Entries.Select(e => e.Character)
                    .Concat(Data.Snapshots.Keys)
+                   .Concat(Data.Retainers.Keys)
                    .Where(c => !string.IsNullOrEmpty(c))
                    .Distinct()
                    .OrderBy(c => c)

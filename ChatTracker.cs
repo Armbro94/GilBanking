@@ -172,6 +172,11 @@ public sealed class ChatTracker : IDisposable
             return;
         }
 
+        // Meldungen mit Gil (außer Spieler-Chat) merken, um sonstige Gil-Einnahmen damit zu beschriften.
+        var ti = (int)type;
+        if (!((ti >= 10 && ti <= 37) || (ti >= 101 && ti <= 107)))
+            GilMessages.Add(text);
+
         // Marktbrett-Meldungen kommen als Systemnachrichten; Echo erlaubt Tests mit /echo.
         if (type != XivChatType.SystemMessage && type != XivChatType.Notice && type != XivChatType.Echo)
             return;
@@ -213,6 +218,18 @@ public sealed class ChatTracker : IDisposable
                 name = row.Name.ToString();
         }
 
+        // Menge: die Zahl direkt vor dem Item-Namen ("Du hast 2 ▷ Item für 434 Gil verkauft").
+        var quantity = 1;
+        if (name.Length > 0)
+        {
+            var qm = Regex.Match(text, @"(\d[\d.,]*)[^\w\d]{0,4}" + Regex.Escape(name));
+            if (qm.Success)
+            {
+                var qd = new string(qm.Groups[1].Value.Where(char.IsDigit).ToArray());
+                if (int.TryParse(qd, out var q) && q > 0) quantity = q;
+            }
+        }
+
         // Doppelte Meldungen innerhalb kurzer Zeit ignorieren.
         var dedupe = $"{kind}|{itemId}|{gil}";
         var now = DateTime.UtcNow;
@@ -226,7 +243,7 @@ public sealed class ChatTracker : IDisposable
             ItemId = itemId,
             ItemName = name,
             IsHq = hq,
-            Quantity = 1,
+            Quantity = quantity,
             TotalGil = gil,
             Character = characterKey() ?? L.T("unknown.char"),
             Source = "Chat",

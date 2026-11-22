@@ -28,6 +28,10 @@ public sealed class LedgerEntry
     [JsonIgnore]
     public long UnitGil => Quantity > 0 ? TotalGil / Quantity : TotalGil;
 
+    /// <summary>Nur zur Laufzeit: Eintrag wurde bereits mit einer zweiten Erkennung (Chat/Händler/Marktbrett) zusammengeführt.</summary>
+    [JsonIgnore]
+    public bool Paired { get; set; }
+
     /// <summary>Reparaturen und sonstige Gil-Änderungen: gehören in den Tab "Ausgaben", nicht zu den Item-Verkäufen.</summary>
     [JsonIgnore]
     public bool IsExpenseEntry => Source == "Repair" || Source == "Other" || ItemName == "@repair";

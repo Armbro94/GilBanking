@@ -98,6 +98,11 @@ public sealed class Plugin : IDalamudPlugin
     {
         if (args.Trim().Equals("settings", StringComparison.OrdinalIgnoreCase))
             mainWindow.ShowSettings();
+        else if (args.Trim().Equals("tooltip", StringComparison.OrdinalIgnoreCase))
+        {
+            config.ShowMarketTooltip = !config.ShowMarketTooltip;
+            config.Save();
+        }
         else
             mainWindow.Toggle();
     }

@@ -4,6 +4,7 @@ using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Utility;
 using Dalamud.Plugin.Services;
+using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
 
 namespace GilBanking;
@@ -16,7 +17,7 @@ namespace GilBanking;
 /// Bei abweichender Quelle folgt ein Block für die Heimatwelt (NQ und HQ getrennt) mit Vergleich
 /// in derselben Qualität wie das Item unter der Maus.
 /// </summary>
-public sealed class ItemTooltip
+public sealed unsafe class ItemTooltip
 {
     private readonly IGameGui gameGui;
     private readonly IObjectTable objectTable;
@@ -27,6 +28,8 @@ public sealed class ItemTooltip
 
     private uint hoverId;
     private DateTime hoverStartUtc;
+
+    private Vector2 lastSize;
 
     private long ownAvg;
     private int ownCount;
@@ -45,6 +48,7 @@ public sealed class ItemTooltip
     public void Draw()
     {
         if (!config.ShowMarketTooltip) return;
+        if (HideKeyHeld()) return;
 
         try
         {
@@ -54,6 +58,90 @@ public sealed class ItemTooltip
         {
             Plugin.Log.Error(ex, "Fehler im Marktpreis-Tooltip.");
         }
+    }
+
+    /// <summary>Ist die in den Einstellungen gewählte "Ausblenden"-Taste gerade gedrückt?</summary>
+    private bool HideKeyHeld()
+    {
+        if (config.TooltipHideKey == 0) return false;
+        var io = ImGui.GetIO();
+        return config.TooltipHideKey switch
+        {
+            1 => io.KeyAlt,
+            2 => io.KeyCtrl,
+            3 => io.KeyShift,
+            4 => io.KeyCtrl && io.KeyShift,
+            _ => false,
+        };
+    }
+
+    /// <summary>Position und Größe (in Pixeln) des Item-Tooltips des Spiels, falls gerade sichtbar.</summary>
+    private bool TryGetGameTooltip(out Vector2 pos, out Vector2 size)
+    {
+        pos = default;
+        size = default;
+        try
+        {
+            object? r = gameGui.GetAddonByName("ItemDetail");
+            nint addr = 0;
+            if (r is nint p) addr = p;
+            else if (r != null)
+            {
+                var t = r.GetType();
+                if (t.GetProperty("IsNull")?.GetValue(r) is true) return false;
+                if (t.GetProperty("Address")?.GetValue(r) is nint a) addr = a;
+            }
+            if (addr == 0) return false;
+
+            var unit = (AtkUnitBase*)addr;
+            if (!unit->IsVisible || unit->RootNode == null) return false;
+
+            var scale = unit->Scale <= 0 ? 1f : unit->Scale;
+            pos = new Vector2(unit->X, unit->Y);
+            size = new Vector2(unit->RootNode->Width * scale, unit->RootNode->Height * scale);
+            return size.X > 1 && size.Y > 1;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Obere linke Ecke des Tooltips: links vom Mauszeiger. Überdeckt das Tooltip des Spiels diese Stelle,
+    /// wird links daneben, rechts daneben oder darunter ausgewichen.
+    /// </summary>
+    private Vector2 PlaceWindow(Vector2 mouse, float scale)
+    {
+        var display = ImGui.GetIO().DisplaySize;
+        var size = lastSize.X > 1 ? lastSize : new Vector2(320, 200) * scale;
+        var gap = 8f * scale;
+
+        var pos = new Vector2(mouse.X + config.TooltipOffsetX * scale - size.X, mouse.Y + config.TooltipOffsetY * scale);
+
+        if (config.TooltipAvoidGame && TryGetGameTooltip(out var gp, out var gs))
+        {
+            bool Overlaps(Vector2 p) =>
+                p.X < gp.X + gs.X + gap && p.X + size.X + gap > gp.X &&
+                p.Y < gp.Y + gs.Y + gap && p.Y + size.Y + gap > gp.Y;
+
+            if (Overlaps(pos))
+            {
+                var left = new Vector2(gp.X - gap - size.X, gp.Y);
+                var right = new Vector2(gp.X + gs.X + gap, gp.Y);
+                var below = new Vector2(gp.X, gp.Y + gs.Y + gap);
+                var above = new Vector2(gp.X, gp.Y - gap - size.Y);
+
+                if (left.X >= 0) pos = left;
+                else if (right.X + size.X <= display.X) pos = right;
+                else if (below.Y + size.Y <= display.Y) pos = below;
+                else if (above.Y >= 0) pos = above;
+            }
+        }
+
+        pos.X = Math.Max(0, Math.Min(pos.X, display.X - size.X));
+        pos.Y = Math.Max(0, Math.Min(pos.Y, display.Y - size.Y));
+        return pos;
     }
 
     /// <summary>
@@ -136,8 +224,8 @@ public sealed class ItemTooltip
         }
 
         var s = ImGuiHelpers.GlobalScale;
-        var pos = ImGui.GetMousePos() + new Vector2(config.TooltipOffsetX, config.TooltipOffsetY) * s;
-        ImGui.SetNextWindowPos(pos, ImGuiCond.Always, new Vector2(1f, 0f));
+        var pos = PlaceWindow(ImGui.GetMousePos(), s);
+        ImGui.SetNextWindowPos(pos, ImGuiCond.Always, Vector2.Zero);
         ImGui.SetNextWindowBgAlpha(0.94f);
 
         const ImGuiWindowFlags flags =
@@ -149,6 +237,7 @@ public sealed class ItemTooltip
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(12, 10) * s);
         if (ImGui.Begin("##GilBankingTip", flags))
         {
+            lastSize = ImGui.GetWindowSize();
             ImGui.TextColored(Ui.Accent, "Gil-Banking");
             ImGui.SameLine();
             ImGui.TextColored(Ui.Dim, "· " + name + (hq ? " ★" : ""));

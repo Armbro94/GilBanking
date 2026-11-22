@@ -2,6 +2,7 @@
   "Author": "Erich",
   "Name": "Gil-Banking",
   "InternalName": "GilBanking",
+  "RepoUrl": "https://github.com/Available5673/GilBanking",
   "Punchline": "Your gil, like a bank account.",
   "Description": "Tracks your gil, retainer gil and market board sales, and shows profit, history and top items in a clean window. Shows live market prices (Universalis) when hovering items. Read-only: no automation, no input on your behalf. Languages: English, Deutsch, Français.",
   "Tags": ["gil", "market", "marketboard", "tracker", "economy", "retainer", "universalis"],

@@ -39,7 +39,7 @@ public sealed unsafe class GilTracker : IDisposable
     private readonly Dictionary<string, DateTime> addonSeen = new();
 
     // Sonstige Gil-Änderungen warten kurz, ob eine Retainer-Bewegung dazu passt (Ein-/Auszahlung).
-    private readonly List<(long Delta, DateTime At, string Note)> pendingOther = new();
+    private readonly List<(long Delta, DateTime At, string Note, string Key)> pendingOther = new();
     private readonly List<(long Signed, DateTime At)> retainerMoves = new();
 
     private readonly IFramework framework;
@@ -178,8 +178,8 @@ public sealed unsafe class GilTracker : IDisposable
 
         if (objectTable.LocalPlayer == null)
         {
+            // Beim Teleport (Ladebildschirm) bleiben wartende Einträge erhalten und werden danach gebucht.
             fastLast = -1;
-            pendingOther.Clear();
             return;
         }
 
@@ -305,7 +305,7 @@ public sealed unsafe class GilTracker : IDisposable
 
         // Alles andere (Quests, Post, Handel, Gegenstände …): kurz warten, ob eine Retainer-Bewegung dazu passt, dann als "Sonstiges" erfassen.
         if (config.TrackOtherGil)
-            pendingOther.Add((delta, now, shown.Count > 0 ? string.Join(", ", shown) : ""));
+            pendingOther.Add((delta, now, shown.Count > 0 ? string.Join(", ", shown) : "", key));
     }
 
     private void ProcessPendingOther(DateTime now)
@@ -327,20 +327,24 @@ public sealed unsafe class GilTracker : IDisposable
                 continue;
             }
 
-            var key = CharacterKey ?? CurrentKey();
-            if (key == null) continue;
-
             ledger.AddEntry(new LedgerEntry
             {
                 Kind = p.Delta > 0 ? EntryKind.Sale : EntryKind.Purchase,
                 ItemName = "@other",
                 Quantity = 1,
                 TotalGil = Math.Abs(p.Delta),
-                Character = key,
+                Character = p.Key,
                 Source = "Other",
-                Note = p.Note,
+                Note = NoteFor(p),
             });
         }
+    }
+
+    /// <summary>Beschriftung: die passende Systemmeldung (z. B. Pflichtinstanz-Belohnung), sonst die offenen Fenster.</summary>
+    private static string NoteFor((long Delta, DateTime At, string Note, string Key) p)
+    {
+        var msgs = GilMessages.Near(p.At, 5);
+        return msgs.Count > 0 ? string.Join("  |  ", msgs) : p.Note;
     }
 
     // ---------- Fenster-Beobachtung ----------
