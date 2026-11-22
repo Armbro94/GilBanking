@@ -148,6 +148,12 @@ internal static class L
         ["hide.ctrl"] = A("Ctrl", "Strg", "Ctrl"),
         ["hide.shift"] = A("Shift", "Umschalt", "Maj"),
         ["hide.ctrlShift"] = A("Ctrl + Shift", "Strg + Umschalt", "Ctrl + Maj"),
+        ["debug.gameTip"] = A("Game tooltip:", "Spiel-Tooltip:", "Info-bulle du jeu :"),
+        ["slider.tipScale"] = A("Tooltip size", "Tooltip-Größe", "Taille de l'info-bulle"),
+        ["chk.hideUntradable"] = A(
+            "No tooltip for items that can't be sold on the market board",
+            "Kein Tooltip bei Items, die nicht auf dem Marktbrett verkäuflich sind",
+            "Pas d'info-bulle pour les objets non vendables à l'hôtel des ventes"),
         ["col.details"] = A("Details", "Details", "Détails"),
         ["src.Market"] = A("Market board", "Marktbrett", "Hôtel des ventes"),
         ["src.Other"] = A("Other", "Sonstiges", "Divers"),

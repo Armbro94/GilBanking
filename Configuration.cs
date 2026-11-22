@@ -29,6 +29,12 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Alle übrigen Gil-Änderungen (Quests, Post, Handel, Gegenstände …) als "Sonstiges" erfassen.</summary>
     public bool TrackOtherGil { get; set; } = true;
 
+    /// <summary>Bei nicht handelbaren Items (nicht auf dem Marktbrett verkäuflich) kein Tooltip zeigen.</summary>
+    public bool TooltipHideUntradable { get; set; } = true;
+
+    /// <summary>Größe des Tooltips (1.0 = normal).</summary>
+    public float TooltipScale { get; set; } = 1.0f;
+
     /// <summary>Tooltip ausblenden, solange diese Tasten gehalten werden (0 aus, 1 Alt, 2 Strg, 3 Umschalt, 4 Strg+Umschalt).</summary>
     public int TooltipHideKey { get; set; } = 0;
 

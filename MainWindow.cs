@@ -809,6 +809,19 @@ public sealed class MainWindow : Window
             config.TooltipCompareHome = compare;
             config.Save();
         }
+        var tipScale = config.TooltipScale;
+        ImGui.SetNextItemWidth(260 * s);
+        if (ImGui.SliderFloat(L.T("slider.tipScale"), ref tipScale, 0.6f, 2.0f, "%.2f"))
+        {
+            config.TooltipScale = tipScale;
+            config.Save();
+        }
+        var hideUntradable = config.TooltipHideUntradable;
+        if (ImGui.Checkbox(L.T("chk.hideUntradable"), ref hideUntradable))
+        {
+            config.TooltipHideUntradable = hideUntradable;
+            config.Save();
+        }
         var avoid = config.TooltipAvoidGame;
         if (ImGui.Checkbox(L.T("chk.avoid"), ref avoid))
         {
@@ -915,6 +928,7 @@ public sealed class MainWindow : Window
         }
         ImGui.TextWrapped(L.T("debug.help"));
         ImGui.TextColored(Ui.Dim, L.F("chat.status", chat.Status));
+        if (config.DebugChat) ImGui.TextColored(Ui.Dim, L.T("debug.gameTip") + " " + ItemTooltip.GameTooltipDebug);
 
         if (config.DebugChat)
         {

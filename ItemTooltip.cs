@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System;
 using System.Linq;
 using System.Numerics;
@@ -30,6 +31,9 @@ public sealed unsafe class ItemTooltip
     private DateTime hoverStartUtc;
 
     private Vector2 lastSize;
+
+    /// <summary>Für die Fehlersuche: was beim Auslesen des Spiel-Tooltips herauskam.</summary>
+    public static string GameTooltipDebug { get; private set; } = "-";
 
     private long ownAvg;
     private int ownCount;
@@ -76,6 +80,48 @@ public sealed unsafe class ItemTooltip
     }
 
     /// <summary>Position und Größe (in Pixeln) des Item-Tooltips des Spiels, falls gerade sichtbar.</summary>
+    /// <summary>Sucht in einem Zeigerobjekt (je nach Dalamud-Version unterschiedlich aufgebaut) die Speicheradresse.</summary>
+    private static nint FindAddress(object r, out string members)
+    {
+        const System.Reflection.BindingFlags flags =
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+        var t = r.GetType();
+        var names = new List<string>();
+
+        foreach (var f in t.GetFields(flags))
+        {
+            names.Add($"{f.Name}:{f.FieldType.Name}");
+            var v = f.GetValue(r);
+            var a = AsAddress(v);
+            if (a != 0) { members = ""; return a; }
+        }
+        foreach (var p in t.GetProperties(flags))
+        {
+            names.Add($"{p.Name}:{p.PropertyType.Name}");
+            if (p.GetIndexParameters().Length > 0) continue;
+            object? v;
+            try { v = p.GetValue(r); } catch { continue; }
+            var a = AsAddress(v);
+            if (a != 0 && (p.Name.Contains("Address") || p.Name.Contains("Pointer") || p.Name.Contains("Ptr")))
+            { members = ""; return a; }
+        }
+
+        members = string.Join(", ", names);
+        return 0;
+    }
+
+    private static nint AsAddress(object? v)
+    {
+        switch (v)
+        {
+            case nint n: return n;
+            case ulong u: return (nint)u;
+            case long l: return (nint)l;
+            case System.Reflection.Pointer ptr: return (nint)System.Reflection.Pointer.Unbox(ptr);
+            default: return 0;
+        }
+    }
+
     private bool TryGetGameTooltip(out Vector2 pos, out Vector2 size)
     {
         pos = default;
@@ -83,26 +129,43 @@ public sealed unsafe class ItemTooltip
         try
         {
             object? r = gameGui.GetAddonByName("ItemDetail");
+            if (r == null) { GameTooltipDebug = "ItemDetail: null"; return false; }
+
             nint addr = 0;
             if (r is nint p) addr = p;
-            else if (r != null)
+            else
             {
                 var t = r.GetType();
-                if (t.GetProperty("IsNull")?.GetValue(r) is true) return false;
-                if (t.GetProperty("Address")?.GetValue(r) is nint a) addr = a;
+                if (t.GetProperty("IsNull")?.GetValue(r) is true) { GameTooltipDebug = $"ItemDetail: IsNull ({t.Name})"; return false; }
+                addr = FindAddress(r, out var members);
+                if (addr == 0)
+                {
+                    GameTooltipDebug = $"ItemDetail: keine Adresse ({t.Name}: {members})";
+                    return false;
+                }
             }
-            if (addr == 0) return false;
+            if (addr == 0) { GameTooltipDebug = "ItemDetail: Adresse 0"; return false; }
 
             var unit = (AtkUnitBase*)addr;
-            if (!unit->IsVisible || unit->RootNode == null) return false;
-
+            var visible = unit->IsVisible;
+            var root = unit->RootNode;
             var scale = unit->Scale <= 0 ? 1f : unit->Scale;
+            var rw = root == null ? 0 : root->Width * scale;
+            var rh = root == null ? 0 : root->Height * scale;
+            GameTooltipDebug = $"ItemDetail: sichtbar={visible}, X={unit->X}, Y={unit->Y}, Größe={rw:0}x{rh:0}, Skalierung={scale:0.##}";
+
+            if (!visible || root == null) return false;
+
+            var display = ImGui.GetIO().DisplaySize;
+            if (rw < 2 || rh < 2 || rw > display.X * 0.9f || rh > display.Y * 0.95f) return false;
+
             pos = new Vector2(unit->X, unit->Y);
-            size = new Vector2(unit->RootNode->Width * scale, unit->RootNode->Height * scale);
-            return size.X > 1 && size.Y > 1;
+            size = new Vector2(rw, rh);
+            return true;
         }
-        catch
+        catch (Exception ex)
         {
+            GameTooltipDebug = "Fehler: " + ex.Message;
             return false;
         }
     }
@@ -195,6 +258,8 @@ public sealed unsafe class ItemTooltip
         var tradable = row.ItemSearchCategory.RowId != 0 && !row.IsUntradable;
         var canHq = row.CanBeHq;
 
+        if (!tradable && config.TooltipHideUntradable) return;
+
         // Heimatwelt (hier verkaufen die Retainer): feste Einstellung, sonst die Heimatwelt des Charakters.
         string? homeWorld = string.IsNullOrWhiteSpace(config.HomeWorld) ? null : config.HomeWorld.Trim();
         string? homeDc = null;
@@ -233,10 +298,12 @@ public sealed unsafe class ItemTooltip
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.AlwaysAutoResize |
             ImGuiWindowFlags.NoInputs | ImGuiWindowFlags.NoFocusOnAppearing | ImGuiWindowFlags.NoNav;
 
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 8f * s);
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(12, 10) * s);
+        var scale = Math.Clamp(config.TooltipScale, 0.6f, 2.0f);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 8f * s * scale);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(12, 10) * s * scale);
         if (ImGui.Begin("##GilBankingTip", flags))
         {
+            ImGui.SetWindowFontScale(scale);
             lastSize = ImGui.GetWindowSize();
             ImGui.TextColored(Ui.Accent, "Gil-Banking");
             ImGui.SameLine();
