@@ -135,11 +135,21 @@ public sealed unsafe class ItemTooltip
 
     private bool TryGetGameTooltip(out Vector2 pos, out Vector2 size)
     {
+        // Je nach Menü nutzt das Spiel unterschiedliche Tooltip-Fenster (Items, Sammlungen, Aktionen).
+        foreach (var name in new[] { "ItemDetail", "ActionDetail", "Tooltip" })
+            if (TryGetAddonRect(name, out pos, out size)) return true;
+        pos = default;
+        size = default;
+        return false;
+    }
+
+    private bool TryGetAddonRect(string addonName, out Vector2 pos, out Vector2 size)
+    {
         pos = default;
         size = default;
         try
         {
-            object? r = gameGui.GetAddonByName("ItemDetail");
+            object? r = gameGui.GetAddonByName(addonName);
             if (r == null) { GameTooltipDebug = "ItemDetail: null"; return false; }
 
             nint addr = 0;
@@ -192,6 +202,15 @@ public sealed unsafe class ItemTooltip
         var gap = 8f * scale;
 
         var pos = new Vector2(mouse.X + config.TooltipOffsetX * scale - size.X, mouse.Y + config.TooltipOffsetY * scale);
+
+        // Kein Platz links vom Mauszeiger (linker Bildschirmrand): sonst würde das Fenster auf dem Zeiger und dem
+        // Tooltip des Spiels landen, das meist rechts unten vom Zeiger erscheint. Dann lieber darüber.
+        var noRoomLeft = mouse.X + config.TooltipOffsetX * scale - size.X < 0;
+        if (noRoomLeft && config.TooltipAvoidGame)
+        {
+            var above = new Vector2(mouse.X - size.X * 0.5f, mouse.Y - size.Y - 24f * scale);
+            if (above.Y >= 0) pos = above;
+        }
 
         if (config.TooltipAvoidGame && TryGetGameTooltip(out var gp, out var gs))
         {
