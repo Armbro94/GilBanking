@@ -11,7 +11,16 @@ public sealed class MarketInfo
 {
     public uint ItemId { get; init; }
     public string Scope { get; init; } = "";
-    public DateTime FetchedUtc { get; init; } = DateTime.UtcNow;
+    /// <summary>Zeitpunkt des letzten Abrufversuchs.</summary>
+    public DateTime FetchedUtc { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Zeitpunkt, zu dem diese Daten tatsächlich von Universalis geholt wurden.</summary>
+    public DateTime DataUtc { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Veraltete Daten aus dem Offline-Cache (Universalis war nicht erreichbar).</summary>
+    public bool Stale { get; set; }
+
+    public MarketInfo Clone() => (MarketInfo)MemberwiseClone();
     public bool Ok { get; init; }
     public string? Error { get; init; }
 
@@ -50,8 +59,11 @@ public sealed class UniversalisClient : IDisposable
     private readonly SemaphoreSlim gate = new(3);
     private readonly CancellationTokenSource cts = new();
 
-    public UniversalisClient()
+    private readonly PriceCache? prices;
+
+    public UniversalisClient(PriceCache? prices = null)
     {
+        this.prices = prices;
         http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         http.DefaultRequestHeaders.UserAgent.ParseAdd("GilBanking-DalamudPlugin/0.1");
     }
@@ -60,14 +72,46 @@ public sealed class UniversalisClient : IDisposable
     public MarketInfo? Get(uint itemId, string scope)
     {
         var key = $"{scope}/{itemId}";
-        if (cache.TryGetValue(key, out var info))
+        if (!cache.TryGetValue(key, out var info))
+        {
+            // Nach einem Neustart: zuerst die gespeicherten Werte zeigen, parallel wird neu geladen.
+            var old = prices?.Get(key);
+            if (old != null)
+            {
+                info = Copy(old, (DateTime.UtcNow - old.FetchedUtc) > Ttl, null);
+                cache[key] = info;
+            }
+        }
+
+        if (info != null)
         {
             var age = DateTime.UtcNow - info.FetchedUtc;
-            if (age > (info.Ok ? Ttl : ErrorTtl)) Request(key, itemId, scope);
+            if (age > (info.Ok && !info.Stale ? Ttl : ErrorTtl)) Request(key, itemId, scope);
             return info;
         }
         Request(key, itemId, scope);
         return null;
+    }
+
+    private static MarketInfo Copy(MarketInfo old, bool stale, DateTime? attempt)
+    {
+        var c = old.Clone();
+        c.Stale = stale;
+        if (attempt != null) c.FetchedUtc = attempt.Value;
+        return c;
+    }
+
+    /// <summary>Ergebnis ablegen; bei Fehlern auf den Offline-Cache zurückgreifen.</summary>
+    private void Store(string key, MarketInfo result)
+    {
+        if (result.Ok)
+        {
+            prices?.Put(key, result);
+            cache[key] = result;
+            return;
+        }
+        var old = prices?.Get(key);
+        cache[key] = old != null ? Copy(old, true, DateTime.UtcNow) : result;
     }
 
     private void Request(string key, uint itemId, string scope)
@@ -81,7 +125,7 @@ public sealed class UniversalisClient : IDisposable
                 await gate.WaitAsync(cts.Token).ConfigureAwait(false);
                 try
                 {
-                    cache[key] = await Fetch(itemId, scope).ConfigureAwait(false);
+                    Store(key, await Fetch(itemId, scope).ConfigureAwait(false));
                     await Task.Delay(120, cts.Token).ConfigureAwait(false); // sanfte Drosselung
                 }
                 finally { gate.Release(); }
@@ -89,7 +133,7 @@ public sealed class UniversalisClient : IDisposable
             catch (OperationCanceledException) { /* Plugin wird entladen */ }
             catch (Exception ex)
             {
-                cache[key] = new MarketInfo { ItemId = itemId, Scope = scope, Ok = false, Error = ex.Message };
+                Store(key, new MarketInfo { ItemId = itemId, Scope = scope, Ok = false, Error = ex.Message });
             }
             finally
             {

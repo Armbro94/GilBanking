@@ -27,8 +27,24 @@ public sealed class DealRow
     public long TotalProfit => Profit * Math.Max(1, BuyQty);
 }
 
+public sealed class WatchRow
+{
+    public uint ItemId { get; init; }
+    public string Name { get; init; } = "";
+    public int Quality { get; init; }
+    public long Wish { get; init; }
+    public bool Found { get; init; }
+    public bool Hq { get; init; }
+    public string World { get; init; } = "";
+    public long Price { get; init; }
+    public int Qty { get; init; }
+    public DateTime? Updated { get; init; }
+    public bool Hit => Found && Wish > 0 && Price <= Wish;
+}
+
 public sealed class DealRequest
 {
+    public List<WatchItem> Watch { get; init; } = new();
     public string Scope { get; init; } = "";
     public string HomeWorld { get; init; } = "";
     public string? HomeDc { get; init; }
@@ -77,6 +93,7 @@ public sealed class DealScanner : IDisposable
     public string StatusKey = "";
     public string StatusArg = "";
     public List<DealRow> Rows { get; private set; } = new();
+    public List<WatchRow> WatchRows { get; private set; } = new();
     public DateTime? LastScanUtc { get; private set; }
     public DateTime NextAllowedUtc { get; private set; } = DateTime.MinValue;
     public int Version { get; private set; }
@@ -102,7 +119,9 @@ public sealed class DealScanner : IDisposable
     {
         try
         {
-            var ids = new List<uint>(req.OwnIds);
+            var ids = req.Watch.Select(w => w.ItemId).Distinct().ToList();
+            foreach (var id in req.OwnIds)
+                if (!ids.Contains(id)) ids.Add(id);
             if (req.UseRecent)
             {
                 foreach (var id in await RecentIds(req))
@@ -120,6 +139,33 @@ public sealed class DealScanner : IDisposable
             var homeItems = await FetchItems(req.HomeWorld, ids);
 
             var sheet = data.GetExcelSheet<Item>();
+
+            // Watchlist: günstigstes passendes Angebot je beobachtetem Item
+            var watchRows = new List<WatchRow>();
+            foreach (var w in req.Watch)
+            {
+                scopeItems.TryGetValue(w.ItemId, out var wsc);
+                Listing? best = wsc?.Listings
+                    .Where(l => l.Price > 0 && (w.Quality == 0 || (w.Quality == 1 && !l.Hq) || (w.Quality == 2 && l.Hq)))
+                    .OrderBy(l => l.Price)
+                    .FirstOrDefault();
+                var wname = sheet != null && sheet.TryGetRow(w.ItemId, out var wrow) ? wrow.Name.ToString() : $"#{w.ItemId}";
+                watchRows.Add(new WatchRow
+                {
+                    ItemId = w.ItemId,
+                    Name = wname,
+                    Quality = w.Quality,
+                    Wish = w.MaxPrice,
+                    Found = best != null,
+                    Hq = best?.Hq ?? false,
+                    World = best?.World ?? "",
+                    Price = (long)(best?.Price ?? 0),
+                    Qty = best?.Qty ?? 0,
+                    Updated = wsc?.Upload,
+                });
+            }
+            WatchRows = watchRows;
+
             var rows = new List<DealRow>();
             foreach (var id in ids)
             {

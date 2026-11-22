@@ -21,6 +21,9 @@ public sealed class Plugin : IDalamudPlugin
     private readonly GilTracker tracker;
     private readonly ChatTracker chatTracker;
     private readonly UniversalisClient market;
+    private readonly PriceCache prices;
+    private readonly LocalMarket localMarket;
+    private readonly MarketReader marketReader;
     private readonly DealScanner deals;
     private readonly ItemTooltip itemTooltip;
     private readonly WindowSystem windows = new("GilBanking");
@@ -67,14 +70,19 @@ public sealed class Plugin : IDalamudPlugin
         ledger.ProtectSales = config.KeepSalesForever;
         if (config.ThinHistory) ledger.Thin(config.ThinAfterDays);
 
-        market = new UniversalisClient();
+        Items.Init(dataManager);
+        var cfgDir = pluginInterface.GetPluginConfigDirectory();
+        prices = new PriceCache(cfgDir, config);
+        localMarket = new LocalMarket(cfgDir, config);
+        market = new UniversalisClient(prices);
+        marketReader = new MarketReader(framework, gameGui, objectTable, config, localMarket);
         tracker = new GilTracker(framework, objectTable, gameGui, dataManager, ledger, config, market);
         chatTracker = new ChatTracker(chatGui, dataManager, ledger, config, () => tracker.CharacterKey);
 
-        itemTooltip = new ItemTooltip(gameGui, objectTable, dataManager, market, ledger, config);
+        itemTooltip = new ItemTooltip(gameGui, objectTable, dataManager, market, ledger, config, localMarket);
 
         deals = new DealScanner(dataManager);
-        mainWindow = new MainWindow(ledger, tracker, chatTracker, config, deals);
+        mainWindow = new MainWindow(ledger, tracker, chatTracker, config, deals, prices, localMarket);
         windows.AddWindow(mainWindow);
 
         var info = new CommandInfo(OnCommand)
@@ -121,7 +129,10 @@ public sealed class Plugin : IDalamudPlugin
         commands.RemoveHandler(ShortCommand);
 
         windows.RemoveAllWindows();
+        marketReader.Dispose();
         market.Dispose();
+        prices.Flush();
+        localMarket.Flush();
         deals.Dispose();
         chatTracker.Dispose();
         tracker.Dispose();

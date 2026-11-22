@@ -4,7 +4,7 @@
     Bei neuen Dalamud-Versionen hier erhöhen (nuget.org/packages/Dalamud.NET.Sdk).
   -->
   <PropertyGroup>
-    <Version>0.0.0.8</Version>
+    <Version>0.0.0.10</Version>
     <Description>Gil and sales tracker (read-only, no automation).</Description>
     <PackageProjectUrl>https://example.invalid/GilBanking</PackageProjectUrl>
     <IsPackable>false</IsPackable>

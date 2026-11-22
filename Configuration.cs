@@ -4,6 +4,18 @@ using Dalamud.Configuration;
 namespace GilBanking;
 
 [Serializable]
+public sealed class WatchItem
+{
+    public uint ItemId { get; set; }
+
+    /// <summary>Wunschpreis pro Stück (0 = nur den aktuellen Preis anzeigen).</summary>
+    public int MaxPrice { get; set; }
+
+    /// <summary>0 = egal, 1 = nur NQ, 2 = nur HQ.</summary>
+    public int Quality { get; set; }
+}
+
+[Serializable]
 public sealed class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 2;
@@ -37,6 +49,20 @@ public sealed class Configuration : IPluginConfiguration
     public bool DealsUseOwnItems { get; set; } = true;
     public bool DealsUseRecent { get; set; } = true;
     public int DealsCooldownSeconds { get; set; } = 60;
+
+    /// <summary>Gezielt beobachtete Items (Schnäppchen-Tab).</summary>
+    public System.Collections.Generic.List<WatchItem> Watchlist { get; set; } = new();
+
+    // ---- Marktdaten lokal speichern ----
+    /// <summary>Universalis-Preise zusätzlich in einer Datei speichern (Offline-Backup, Anzeige als "veraltet").</summary>
+    public bool PriceCacheEnabled { get; set; } = true;
+    public string PriceCacheDirectory { get; set; } = "";
+    public int PriceCacheDays { get; set; } = 14;
+
+    /// <summary>ALPHA: Preise der Marktbrett-Liste selbst mitlesen und lokal speichern.</summary>
+    public bool LocalMarketEnabled { get; set; } = false;
+    public string LocalMarketDirectory { get; set; } = "";
+    public int LocalMarketDays { get; set; } = 7;
 
     /// <summary>Bei nicht handelbaren Items (nicht auf dem Marktbrett verkäuflich) kein Tooltip zeigen.</summary>
     public bool TooltipHideUntradable { get; set; } = true;

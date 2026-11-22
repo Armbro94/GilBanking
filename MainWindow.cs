@@ -49,8 +49,27 @@ public sealed class MainWindow : Window
     private readonly Cache<ExpenseView> expenseCache = new();
     private readonly DealScanner deals;
     private string dealsMessage = "";
+    private readonly PriceCache prices;
+    private readonly LocalMarket local;
 
-    public MainWindow(Ledger ledger, GilTracker tracker, ChatTracker chat, Configuration config, DealScanner deals)
+    // Watchlist-Eingabe
+    private string watchText = "";
+    private string watchSearched = "";
+    private List<(uint Id, string Name)> watchResults = new();
+    private uint watchPick;
+    private int watchWish = 0;
+    private int watchQuality = 0;
+
+    // Speicherorte der Marktdaten
+    private string pathPrice;
+    private string pathLocal;
+    private string pricePathInfo = "";
+    private string localPathInfo = "";
+    private bool pricePathOk = true;
+    private bool localPathOk = true;
+
+    public MainWindow(Ledger ledger, GilTracker tracker, ChatTracker chat, Configuration config, DealScanner deals,
+                      PriceCache prices, LocalMarket local)
         : base("Gil-Banking###GilBankingMain")
     {
         this.ledger = ledger;
@@ -58,6 +77,10 @@ public sealed class MainWindow : Window
         this.chat = chat;
         this.config = config;
         this.deals = deals;
+        this.prices = prices;
+        this.local = local;
+        pathPrice = config.PriceCacheDirectory;
+        pathLocal = config.LocalMarketDirectory;
         kwSale = config.SaleKeywords;
         kwBuy = config.PurchaseKeywords;
         pathData = config.DataDirectory;
@@ -146,6 +169,32 @@ public sealed class MainWindow : Window
         2 => DateTime.UtcNow.AddDays(-30),
         _ => DateTime.MinValue,
     };
+
+    /// <summary>Eingabefeld für einen Speicherordner mit "Übernehmen" und "Standard".</summary>
+    private static void StorePathRow(string id, string label, ref string input, ref string info, ref bool ok,
+                                     Func<string, (bool Ok, string Error)> apply)
+    {
+        var s = ImGuiHelpers.GlobalScale;
+        ImGui.SetNextItemWidth(520 * s);
+        ImGui.InputText("##" + id, ref input, 500);
+        ImGui.SameLine();
+        ImGui.TextColored(Ui.Dim, label);
+        if (ImGui.Button(L.T("paths.apply") + "##" + id + "a"))
+        {
+            var r = apply(input);
+            ok = r.Ok;
+            info = r.Ok ? L.T("store.applied") : r.Error;
+        }
+        ImGui.SameLine();
+        if (ImGui.Button(L.T("paths.reset") + "##" + id + "r"))
+        {
+            input = "";
+            var r = apply("");
+            ok = r.Ok;
+            info = r.Ok ? L.T("store.applied") : r.Error;
+        }
+        if (info.Length > 0) ImGui.TextColored(ok ? Ui.Good : Ui.Bad, info);
+    }
 
     private static bool Combo(string id, float width, IReadOnlyList<string> items, ref int idx)
     {
@@ -522,6 +571,7 @@ public sealed class MainWindow : Window
                     HomeWorld = home,
                     HomeDc = dc,
                     OwnIds = own,
+                    Watch = config.Watchlist.ToList(),
                     UseRecent = config.DealsUseRecent,
                     MinProfit = config.DealsMinProfit,
                     MinMargin = config.DealsMinMargin,
@@ -592,6 +642,9 @@ public sealed class MainWindow : Window
         ImGui.TextColored(Ui.Dim, L.T("deals.hint"));
         ImGui.Spacing();
 
+        DrawWatchlist();
+        ImGui.Spacing();
+
         var rows = deals.Rows;
         if (rows.Count == 0)
         {
@@ -641,6 +694,113 @@ public sealed class MainWindow : Window
                 ImGui.PopID();
             }
             ImGui.EndTable();
+        }
+    }
+
+    // ---------- Watchlist ----------
+
+    private void DrawWatchlist()
+    {
+        var s = ImGuiHelpers.GlobalScale;
+        if (!ImGui.CollapsingHeader(L.T("watch.title") + $" ({config.Watchlist.Count})###gl_watch", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        ImGui.TextColored(Ui.Dim, L.T("watch.help"));
+
+        // Item suchen
+        ImGui.SetNextItemWidth(260 * s);
+        ImGui.InputText(L.T("watch.search") + "##gl_wtext", ref watchText, 80);
+        if (watchText != watchSearched)
+        {
+            watchSearched = watchText;
+            watchResults = Items.Search(watchText, 8);
+        }
+        if (watchText.Trim().Length >= 2 && watchResults.Count == 0)
+            ImGui.TextColored(Ui.Dim, L.T("watch.noResults"));
+        foreach (var r in watchResults)
+        {
+            if (ImGui.Selectable(r.Name + "##gl_wres" + r.Id, watchPick == r.Id))
+                watchPick = r.Id;
+        }
+
+        if (watchPick != 0)
+        {
+            ImGui.TextColored(Ui.Accent, L.F("watch.pick", Items.NameOf(watchPick)));
+            ImGui.SetNextItemWidth(160 * s);
+            ImGui.InputInt(L.T("watch.wish") + "##gl_wwish", ref watchWish, 0, 0);
+            if (watchWish < 0) watchWish = 0;
+
+            var q = new List<string> { L.T("q.any"), L.T("q.nq"), L.T("q.hq") };
+            if (Combo("##gl_wq", 140 * s, q, ref watchQuality)) { }
+            ImGui.SameLine();
+            if (ImGui.Button(L.T("watch.add") + "##gl_wadd"))
+            {
+                config.Watchlist.RemoveAll(w => w.ItemId == watchPick && w.Quality == watchQuality);
+                config.Watchlist.Add(new WatchItem { ItemId = watchPick, MaxPrice = watchWish, Quality = watchQuality });
+                config.Save();
+                watchPick = 0;
+                watchText = "";
+                watchSearched = "";
+                watchResults = new();
+            }
+        }
+
+        // Aktuelle Liste mit Ergebnissen des letzten Durchlaufs
+        if (config.Watchlist.Count == 0)
+        {
+            ImGui.TextColored(Ui.Dim, L.T("watch.empty"));
+            return;
+        }
+
+        const ImGuiTableFlags flags = ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.BordersInnerV |
+                                      ImGuiTableFlags.SizingStretchProp;
+        var rowsH = Math.Min(config.Watchlist.Count, 6) * 24f * s + 30f * s;
+        if (ImGui.BeginTable("##gl_watchtable", 6, flags, new Vector2(0, rowsH)))
+        {
+            ImGui.TableSetupScrollFreeze(0, 1);
+            ImGui.TableSetupColumn(L.T("col.item"), ImGuiTableColumnFlags.WidthStretch, 3f);
+            ImGui.TableSetupColumn(L.T("watch.colWish"), ImGuiTableColumnFlags.WidthStretch, 1.2f);
+            ImGui.TableSetupColumn(L.T("deals.colBuy"), ImGuiTableColumnFlags.WidthStretch, 1.6f);
+            ImGui.TableSetupColumn(L.T("deals.colWorld"), ImGuiTableColumnFlags.WidthStretch, 1.2f);
+            ImGui.TableSetupColumn(L.T("deals.colAge"), ImGuiTableColumnFlags.WidthStretch, 1f);
+            ImGui.TableSetupColumn("##x", ImGuiTableColumnFlags.WidthFixed, 80 * s);
+            ImGui.TableHeadersRow();
+
+            var results = deals.WatchRows;
+            WatchItem? remove = null;
+            for (var i = 0; i < config.Watchlist.Count; i++)
+            {
+                var w = config.Watchlist[i];
+                var row = results.FirstOrDefault(x => x.ItemId == w.ItemId && x.Quality == w.Quality);
+                ImGui.PushID(i);
+                ImGui.TableNextRow();
+
+                var qLabel = w.Quality == 1 ? " NQ" : w.Quality == 2 ? " HQ" : "";
+                ImGui.TableNextColumn();
+                ImGui.Text(Items.NameOf(w.ItemId) + qLabel);
+                ImGui.TableNextColumn();
+                ImGui.Text(w.MaxPrice > 0 ? Ui.Gil(w.MaxPrice) : "–");
+
+                ImGui.TableNextColumn();
+                if (row == null) ImGui.TextColored(Ui.Dim, L.T("watch.notScanned"));
+                else if (!row.Found) ImGui.TextColored(Ui.Dim, L.T("watch.noListing"));
+                else ImGui.TextColored(row.Hit ? Ui.Good : Ui.Gold, $"{Ui.Gil(row.Price)} \u00d7{row.Qty}" + (row.Hq ? " HQ" : ""));
+
+                ImGui.TableNextColumn();
+                ImGui.Text(row != null && row.Found ? row.World : "");
+                ImGui.TableNextColumn();
+                ImGui.TextColored(Ui.Dim, row?.Updated != null ? L.Age(row.Updated.Value) : "–");
+                ImGui.TableNextColumn();
+                if (ImGui.SmallButton(L.T("watch.remove") + "##gl_wrm")) remove = w;
+                ImGui.PopID();
+            }
+            ImGui.EndTable();
+
+            if (remove != null)
+            {
+                config.Watchlist.Remove(remove);
+                config.Save();
+            }
         }
     }
 
@@ -934,6 +1094,45 @@ public sealed class MainWindow : Window
             config.Save();
         }
         ImGui.TextColored(Ui.Dim, L.T("save.help"));
+
+        // Marktdaten & eigene Speicherorte
+        ImGui.Spacing();
+        ImGui.TextColored(Ui.Accent, L.T("section.market"));
+        ImGui.TextWrapped(L.T("market.help"));
+
+        var pcOn = config.PriceCacheEnabled;
+        if (ImGui.Checkbox(L.T("cache.enable") + "##gl_pcon", ref pcOn)) { config.PriceCacheEnabled = pcOn; config.Save(); }
+        ImGui.TextColored(Ui.Dim, L.T("cache.help"));
+        var pcDays = config.PriceCacheDays;
+        ImGui.SetNextItemWidth(260 * s);
+        if (ImGui.SliderInt(L.T("cache.days") + "##gl_pcd", ref pcDays, 1, 90)) { config.PriceCacheDays = pcDays; config.Save(); }
+        StorePathRow("gl_pcpath", L.T("cache.path"), ref pathPrice, ref pricePathInfo, ref pricePathOk,
+            dir => { var ok = prices.Store.SetDir(dir, out var err); if (ok) { config.PriceCacheDirectory = dir.Trim(); config.Save(); } return (ok, err); });
+        ImGui.TextColored(Ui.Dim, L.F("cache.info", prices.Count.ToString(), prices.Store.FilePath));
+        if (ImGui.Button(L.T("cache.clear") + "##gl_pcclear")) prices.Clear();
+
+        ImGui.Spacing();
+        ImGui.PushStyleColor(ImGuiCol.Text, Ui.Gold);
+        var lmOn = config.LocalMarketEnabled;
+        if (ImGui.Checkbox(L.T("local.enable") + "##gl_lmon", ref lmOn)) { config.LocalMarketEnabled = lmOn; config.Save(); }
+        ImGui.PopStyleColor();
+        ImGui.TextWrapped(L.T("local.help"));
+        ImGui.PushStyleColor(ImGuiCol.Text, Ui.Accent);
+        ImGui.TextWrapped(L.T("local.tip"));
+        ImGui.PopStyleColor();
+        var lmDays = config.LocalMarketDays;
+        ImGui.SetNextItemWidth(260 * s);
+        if (ImGui.SliderInt(L.T("local.days") + "##gl_lmd", ref lmDays, 1, 90)) { config.LocalMarketDays = lmDays; config.Save(); }
+        StorePathRow("gl_lmpath", L.T("local.path"), ref pathLocal, ref localPathInfo, ref localPathOk,
+            dir => { var ok = local.Store.SetDir(dir, out var err); if (ok) { config.LocalMarketDirectory = dir.Trim(); config.Save(); } return (ok, err); });
+        ImGui.TextColored(Ui.Dim, L.F("local.info", local.Count.ToString(), local.Store.FilePath));
+        if (config.LocalMarketEnabled) ImGui.TextColored(Ui.Dim, L.F("local.status", MarketReader.Status));
+        if (ImGui.Button(L.T("local.clear") + "##gl_lmclear")) local.Clear();
+        if (ImGui.CollapsingHeader(L.T("local.debug") + "###gl_lmdebug"))
+        {
+            foreach (var line in MarketReader.DebugLines)
+                ImGui.TextColored(Ui.Dim, line);
+        }
 
         // Tooltip
         ImGui.Spacing();

@@ -16,6 +16,13 @@ Languages: English, Deutsch, Français (automatic from Dalamud's language, chang
   from the gil received (split by market price when several items sold). Works for sales while you were offline.
 - **Deals:** finds items that are cheaper on another world than on your home world (Universalis), with profit
   after 5 % tax, margin and sales per day. Manual reload with a cooldown, only a few requests per scan.
+- **Watchlist (in the Deals tab):** search items by name, set a wish price and quality; every reload checks the cheapest
+  matching listing in your search range and highlights hits.
+- **Offline price cache:** Universalis prices are also saved to a file; if Universalis is down, the last values are shown
+  and marked as outdated. Storage folder and retention are selectable.
+- **Own market board reading (Alpha, off by default):** while you browse a market board search, the visible price list is read
+  (read-only, nothing clicked or uploaded) and the lowest price is stored with a time stamp. The tooltip shows whether your own
+  observation is newer than Universalis. Storage folder selectable. Tip: also run the official Universalis plugin.
 - **NPC shops, market board purchases:** purchases/sales at NPC vendors and market board purchases are detected
   from gil changes while the matching window is open (read-only).
 - **Expenses & other:** repairs plus every other gil change (quests, mail, trades, items …) in its own tab.

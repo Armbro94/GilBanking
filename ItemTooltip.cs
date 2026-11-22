@@ -26,6 +26,7 @@ public sealed unsafe class ItemTooltip
     private readonly UniversalisClient market;
     private readonly Ledger ledger;
     private readonly Configuration config;
+    private readonly LocalMarket local;
 
     private uint hoverId;
     private DateTime hoverStartUtc;
@@ -39,7 +40,7 @@ public sealed unsafe class ItemTooltip
     private int ownCount;
 
     public ItemTooltip(IGameGui gameGui, IObjectTable objectTable, IDataManager data,
-                       UniversalisClient market, Ledger ledger, Configuration config)
+                       UniversalisClient market, Ledger ledger, Configuration config, LocalMarket local)
     {
         this.gameGui = gameGui;
         this.objectTable = objectTable;
@@ -47,6 +48,7 @@ public sealed unsafe class ItemTooltip
         this.market = market;
         this.ledger = ledger;
         this.config = config;
+        this.local = local;
     }
 
     public void Draw()
@@ -108,6 +110,15 @@ public sealed unsafe class ItemTooltip
 
         members = string.Join(", ", names);
         return 0;
+    }
+
+    /// <summary>Speicheradresse eines Addons aus dem Rückgabewert von GetAddonByName (0 = nicht vorhanden).</summary>
+    public static nint AddonAddress(object? r)
+    {
+        if (r == null) return 0;
+        if (r is nint p) return p;
+        if (r.GetType().GetProperty("IsNull")?.GetValue(r) is true) return 0;
+        return FindAddress(r, out _);
     }
 
     private static nint AsAddress(object? v)
@@ -338,6 +349,8 @@ public sealed unsafe class ItemTooltip
             else
             {
                 ImGui.TextColored(Ui.Dim, L.F("tip.board", scope));
+                if (info.Stale)
+                    ImGui.TextColored(Ui.Bad, L.F("tip.stale", L.Age(info.DataUtc)));
 
                 var (nqPrice, nqWorld) = Cheapest(info, false);
                 PriceLine(L.T("tip.minNq"), nqPrice, nqWorld, scope);
@@ -363,6 +376,9 @@ public sealed unsafe class ItemTooltip
                 if (showHome)
                     DrawHomeBlock(info, home, homeWorld!, scope, canHq, hq);
             }
+
+            if (tradable && config.LocalMarketEnabled && !string.IsNullOrEmpty(scope))
+                DrawLocalObs(id, scope, canHq, hq, info);
 
             if (ownCount > 0)
             {
@@ -457,6 +473,24 @@ public sealed unsafe class ItemTooltip
         {
             ImGui.TextColored(Ui.Dim, "–");
         }
+    }
+
+    /// <summary>Selbst am Marktbrett gesehener Preis (Alpha); zeigt, ob er neuer ist als die Universalis-Daten.</summary>
+    private void DrawLocalObs(uint id, string scope, bool canHq, bool hq, MarketInfo? info)
+    {
+        var o = local.Best(id, scope);
+        if (o == null) return;
+
+        var price = canHq ? (hq ? o.MinHq : o.MinNq) : o.Min;
+        var quality = canHq ? (hq ? " HQ" : " NQ") : "";
+        if (price <= 0) { price = o.Min; quality = ""; }
+
+        ImGui.Separator();
+        var newer = info == null || info.LastUpload == null || o.SeenUtc > info.LastUpload.Value;
+        ImGui.TextColored(newer ? Ui.Good : Ui.Dim, L.T("tip.own") + quality);
+        ImGui.SameLine();
+        ImGui.TextColored(Ui.Gold, $"{Ui.Gil(price)} Gil ({o.World})");
+        ImGui.TextColored(Ui.Dim, L.F(newer ? "tip.ownNewer" : "tip.ownOlder", L.Age(o.SeenUtc)));
     }
 
     private void CalcOwn(uint id)
