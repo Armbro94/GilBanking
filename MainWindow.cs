@@ -47,14 +47,17 @@ public sealed class MainWindow : Window
     private readonly Cache<List<string>> charsCache = new();
     private readonly Cache<RetainerView> retainerCache = new();
     private readonly Cache<ExpenseView> expenseCache = new();
+    private readonly DealScanner deals;
+    private string dealsMessage = "";
 
-    public MainWindow(Ledger ledger, GilTracker tracker, ChatTracker chat, Configuration config)
+    public MainWindow(Ledger ledger, GilTracker tracker, ChatTracker chat, Configuration config, DealScanner deals)
         : base("Gil-Banking###GilBankingMain")
     {
         this.ledger = ledger;
         this.tracker = tracker;
         this.chat = chat;
         this.config = config;
+        this.deals = deals;
         kwSale = config.SaleKeywords;
         kwBuy = config.PurchaseKeywords;
         pathData = config.DataDirectory;
@@ -176,6 +179,7 @@ public sealed class MainWindow : Window
             if (ImGui.BeginTabItem(L.T("tab.sales") + "###gl_tab_sales")) { DrawSales(); ImGui.EndTabItem(); }
             if (ImGui.BeginTabItem(L.T("tab.items") + "###gl_tab_items")) { DrawItems(); ImGui.EndTabItem(); }
             if (ImGui.BeginTabItem(L.T("tab.expenses") + "###gl_tab_expenses")) { DrawExpenses(); ImGui.EndTabItem(); }
+            if (ImGui.BeginTabItem(L.T("tab.deals") + "###gl_tab_deals")) { DrawDeals(); ImGui.EndTabItem(); }
             if (ImGui.BeginTabItem(L.T("tab.retainers") + "###gl_tab_retainers")) { DrawRetainers(); ImGui.EndTabItem(); }
 
             var flags = selectSettings ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None;
@@ -278,7 +282,10 @@ public sealed class MainWindow : Window
                 if (e.Source != "Retainer" || e.TimeUtc < from) continue;
                 if (ch != null && e.Character != ch) continue;
 
-                var k = e.Character + "|" + e.ItemName;
+                var rn = !string.IsNullOrEmpty(e.Retainer) ? e.Retainer
+                       : e.ItemName.StartsWith("@retainer:", StringComparison.Ordinal) ? e.ItemName.Substring(10) : "";
+                if (rn.Length == 0) continue;
+                var k = e.Character + "|@retainer:" + rn;
                 income.TryGetValue(k, out var cur);
                 income[k] = (cur.Sum + e.TotalGil, e.TimeUtc > cur.Last ? e.TimeUtc : cur.Last);
             }
@@ -466,6 +473,175 @@ public sealed class MainWindow : Window
         }
 
         if (toDelete != null) ledger.RemoveEntry(toDelete.Value);
+    }
+
+    // ---------- Schnäppchen ----------
+
+    private void DrawDeals()
+    {
+        var s = ImGuiHelpers.GlobalScale;
+        var cooldowns = new[] { 30, 60, 120 };
+
+        ImGui.PushStyleColor(ImGuiCol.Text, Ui.Gold);
+        ImGui.TextWrapped(L.T("deals.alpha"));
+        ImGui.PopStyleColor();
+        ImGui.Spacing();
+
+        // Neu laden (mit Wartezeit, damit Universalis nicht belastet wird)
+        var can = deals.CanStart;
+        var label = deals.Running ? L.T("deals.loading")
+            : can ? L.T("deals.reload")
+            : L.F("deals.wait", ((int)Math.Ceiling(deals.SecondsUntilAllowed)).ToString());
+        ImGui.BeginDisabled(!can);
+        if (ImGui.Button(label + "##gl_deals_reload", new Vector2(200 * s, 0)))
+        {
+            var home = tracker.HomeWorldName();
+            if (string.IsNullOrEmpty(home))
+            {
+                dealsMessage = L.T("deals.noHome");
+            }
+            else
+            {
+                dealsMessage = "";
+                var own = new List<uint>();
+                if (config.DealsUseOwnItems)
+                {
+                    own = ledger.Data.Entries
+                        .Where(e => e.Kind == EntryKind.Sale && e.ItemId != 0 && !e.IsExpenseEntry)
+                        .GroupBy(e => e.ItemId)
+                        .OrderByDescending(g => g.Max(x => x.TimeUtc))
+                        .Take(40)
+                        .Select(g => g.Key)
+                        .ToList();
+                }
+
+                var dc = Worlds.DataCenterOf(home);
+                deals.Start(new DealRequest
+                {
+                    Scope = config.DealsScope == 1 ? "Europe" : (dc ?? home),
+                    HomeWorld = home,
+                    HomeDc = dc,
+                    OwnIds = own,
+                    UseRecent = config.DealsUseRecent,
+                    MinProfit = config.DealsMinProfit,
+                    MinMargin = config.DealsMinMargin,
+                    MinVelocity = config.DealsMinVelocity,
+                    CooldownSeconds = config.DealsCooldownSeconds,
+                });
+            }
+        }
+        ImGui.EndDisabled();
+
+        ImGui.SameLine();
+        if (dealsMessage.Length > 0) ImGui.TextColored(Ui.Bad, dealsMessage);
+        else if (deals.StatusKey.Length > 0)
+            ImGui.TextColored(deals.StatusKey == "deals.st.error" ? Ui.Bad : Ui.Dim, L.F(deals.StatusKey, deals.StatusArg));
+        if (deals.LastScanUtc != null)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(Ui.Dim, L.F("deals.last", L.Age(deals.LastScanUtc.Value)));
+        }
+
+        // Einstellungen
+        var scopeIdx = config.DealsScope;
+        ImGui.TextColored(Ui.Dim, L.T("deals.scope"));
+        ImGui.SameLine();
+        if (Combo("##gl_dscope", 220 * s, new List<string> { L.T("deals.scopeDc"), L.T("deals.scopeEu") }, ref scopeIdx))
+        {
+            config.DealsScope = scopeIdx;
+            config.Save();
+        }
+        ImGui.SameLine(0, 18 * s);
+        var cdIdx = Math.Max(0, Array.IndexOf(cooldowns, config.DealsCooldownSeconds));
+        ImGui.TextColored(Ui.Dim, L.T("deals.cooldown"));
+        ImGui.SameLine();
+        if (Combo("##gl_dcd", 110 * s, cooldowns.Select(c => c + " s").ToList(), ref cdIdx))
+        {
+            config.DealsCooldownSeconds = cooldowns[cdIdx];
+            config.Save();
+        }
+
+        var minProfit = config.DealsMinProfit;
+        ImGui.SetNextItemWidth(240 * s);
+        if (ImGui.SliderInt(L.T("deals.minProfit") + "##gl_dmp", ref minProfit, 0, 20000))
+        {
+            config.DealsMinProfit = minProfit;
+            config.Save();
+        }
+        var minMargin = config.DealsMinMargin;
+        ImGui.SetNextItemWidth(240 * s);
+        if (ImGui.SliderInt(L.T("deals.minMargin") + "##gl_dmm", ref minMargin, 0, 200))
+        {
+            config.DealsMinMargin = minMargin;
+            config.Save();
+        }
+        var minVel = config.DealsMinVelocity;
+        ImGui.SetNextItemWidth(240 * s);
+        if (ImGui.SliderFloat(L.T("deals.minVelocity") + "##gl_dmv", ref minVel, 0f, 10f, "%.1f"))
+        {
+            config.DealsMinVelocity = minVel;
+            config.Save();
+        }
+
+        var own2 = config.DealsUseOwnItems;
+        if (ImGui.Checkbox(L.T("deals.useOwn"), ref own2)) { config.DealsUseOwnItems = own2; config.Save(); }
+        ImGui.SameLine(0, 18 * s);
+        var rec = config.DealsUseRecent;
+        if (ImGui.Checkbox(L.T("deals.useRecent"), ref rec)) { config.DealsUseRecent = rec; config.Save(); }
+
+        ImGui.TextColored(Ui.Dim, L.T("deals.hint"));
+        ImGui.Spacing();
+
+        var rows = deals.Rows;
+        if (rows.Count == 0)
+        {
+            ImGui.TextColored(Ui.Dim, L.T("deals.empty"));
+            return;
+        }
+
+        const ImGuiTableFlags flags = ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.Resizable |
+                                      ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp;
+        if (ImGui.BeginTable("##gl_deals", 8, flags, new Vector2(0, ImGui.GetContentRegionAvail().Y)))
+        {
+            ImGui.TableSetupScrollFreeze(0, 1);
+            ImGui.TableSetupColumn(L.T("col.item"), ImGuiTableColumnFlags.WidthStretch, 3f);
+            ImGui.TableSetupColumn(L.T("deals.colWorld"), ImGuiTableColumnFlags.WidthStretch, 1.2f);
+            ImGui.TableSetupColumn(L.T("deals.colBuy"), ImGuiTableColumnFlags.WidthStretch, 1.4f);
+            ImGui.TableSetupColumn(L.T("deals.colHome"), ImGuiTableColumnFlags.WidthStretch, 1.4f);
+            ImGui.TableSetupColumn(L.T("deals.colProfit"), ImGuiTableColumnFlags.WidthStretch, 1.3f);
+            ImGui.TableSetupColumn(L.T("deals.colMargin"), ImGuiTableColumnFlags.WidthStretch, 1f);
+            ImGui.TableSetupColumn(L.T("deals.colVelocity"), ImGuiTableColumnFlags.WidthStretch, 1f);
+            ImGui.TableSetupColumn(L.T("deals.colAge"), ImGuiTableColumnFlags.WidthStretch, 1f);
+            ImGui.TableHeadersRow();
+
+            for (var i = 0; i < rows.Count; i++)
+            {
+                var r = rows[i];
+                ImGui.PushID(i);
+                ImGui.TableNextRow();
+
+                ImGui.TableNextColumn();
+                if (ImGui.Selectable(r.Name + (r.Hq ? " \u2605" : "") + "##row", false, ImGuiSelectableFlags.SpanAllColumns))
+                    ImGui.SetClipboardText(r.Name);
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip(L.T("deals.copyTip"));
+                ImGui.TableNextColumn();
+                ImGui.Text(r.BuyWorld);
+                ImGui.TableNextColumn();
+                ImGui.TextColored(Ui.Gold, $"{Ui.Gil(r.BuyPrice)} \u00d7{r.BuyQty}");
+                ImGui.TableNextColumn();
+                ImGui.Text(Ui.Gil(r.HomePrice) + (r.HomeIsAverage ? " \u00d8" : ""));
+                ImGui.TableNextColumn();
+                ImGui.TextColored(Ui.Good, "+" + Ui.Gil(r.Profit));
+                ImGui.TableNextColumn();
+                ImGui.TextColored(Ui.Good, r.Margin.ToString("0", L.Culture) + " %");
+                ImGui.TableNextColumn();
+                ImGui.Text(r.Velocity.ToString("0.#", L.Culture));
+                ImGui.TableNextColumn();
+                ImGui.TextColored(Ui.Dim, r.Updated != null ? L.Age(r.Updated.Value) : "–");
+                ImGui.PopID();
+            }
+            ImGui.EndTable();
+        }
     }
 
     // ---------- Ausgaben & Sonstiges ----------

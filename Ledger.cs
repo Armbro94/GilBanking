@@ -151,6 +151,15 @@ public sealed class Ledger
         Snapshots = Data.Snapshots.ToDictionary(k => k.Key, v => new List<GilSnapshot>(v.Value)),
         Retainers = Data.Retainers.ToDictionary(k => k.Key, v => new Dictionary<string, long>(v.Value)),
         Sessions = Data.Sessions.ToDictionary(k => k.Key, v => new DaySession { Day = v.Value.Day, StartGil = v.Value.StartGil }),
+        Listings = Data.Listings.ToDictionary(
+            c => c.Key,
+            c => c.Value.ToDictionary(
+                r => r.Key,
+                r => new RetainerListing
+                {
+                    TimeUtc = r.Value.TimeUtc,
+                    Items = r.Value.Items.Select(i => new ListedItem { ItemId = i.ItemId, Hq = i.Hq, Qty = i.Qty }).ToList(),
+                })),
     };
 
     private void Write(LedgerData copy, string target)
@@ -427,6 +436,34 @@ public sealed class Ledger
         Data.Snapshots.Remove(character);
         Data.Retainers.Remove(character);
         Data.Sessions.Remove(character);
+        Data.Listings.Remove(character);
+        MarkDirty();
+    }
+
+    // ---------- Gehilfen-Angebote ----------
+
+    public RetainerListing? GetListing(string character, string retainer) =>
+        Data.Listings.TryGetValue(character, out var d) && d.TryGetValue(retainer, out var l) ? l : null;
+
+    public void SetListing(string character, string retainer, List<ListedItem> items)
+    {
+        if (!Data.Listings.TryGetValue(character, out var d))
+            Data.Listings[character] = d = new Dictionary<string, RetainerListing>();
+        d[retainer] = new RetainerListing { TimeUtc = DateTime.UtcNow, Items = items };
+        MarkDirty();
+    }
+
+    /// <summary>Noch nicht aufgeschlüsselte Retainer-Einnahmen (nur ein Betrag, kein Item) eines Gehilfen.</summary>
+    public List<LedgerEntry> FindRetainerLumps(string character, string retainer) =>
+        Data.Entries.Where(e => e.Character == character && e.Source == "Retainer"
+                                && e.ItemName == "@retainer:" + retainer).ToList();
+
+    /// <summary>Ersetzt Sammelbeträge durch Einträge je Item.</summary>
+    public void ReplaceEntries(IEnumerable<LedgerEntry> remove, IEnumerable<LedgerEntry> add)
+    {
+        var ids = new HashSet<Guid>(remove.Select(e => e.Id));
+        Data.Entries.RemoveAll(e => ids.Contains(e.Id));
+        Data.Entries.AddRange(add);
         MarkDirty();
     }
 
@@ -483,7 +520,7 @@ public sealed class Ledger
         foreach (var e in Data.Entries.OrderBy(e => e.TimeUtc))
         {
             if (e.TimeUtc < fromUtc || !Match(ch, e.Character)) continue;
-            if (e.IsExpenseEntry || e.Source == "Retainer") continue; // Reparatur, Sonstiges, Retainer-Pauschalen sind keine Items
+            if (e.IsExpenseEntry || e.ItemName.StartsWith("@retainer:", StringComparison.Ordinal)) continue; // Reparatur, Sonstiges, Retainer-Pauschalen sind keine Items
             var key = e.ItemId != 0 ? "#" + e.ItemId : e.ItemName;
             if (!map.TryGetValue(key, out var st))
                 map[key] = st = new ItemStat { Key = key, ItemId = e.ItemId };

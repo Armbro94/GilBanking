@@ -29,6 +29,15 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Alle übrigen Gil-Änderungen (Quests, Post, Handel, Gegenstände …) als "Sonstiges" erfassen.</summary>
     public bool TrackOtherGil { get; set; } = true;
 
+    // ---- Schnäppchen-Suche ----
+    public int DealsScope { get; set; } = 0;            // 0 = mein Rechenzentrum, 1 = Europa
+    public int DealsMinProfit { get; set; } = 500;      // Gil pro Stück
+    public int DealsMinMargin { get; set; } = 25;       // Prozent
+    public float DealsMinVelocity { get; set; } = 0.5f; // Verkäufe pro Tag auf der Heimatwelt
+    public bool DealsUseOwnItems { get; set; } = true;
+    public bool DealsUseRecent { get; set; } = true;
+    public int DealsCooldownSeconds { get; set; } = 60;
+
     /// <summary>Bei nicht handelbaren Items (nicht auf dem Marktbrett verkäuflich) kein Tooltip zeigen.</summary>
     public bool TooltipHideUntradable { get; set; } = true;
 

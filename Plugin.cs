@@ -21,6 +21,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly GilTracker tracker;
     private readonly ChatTracker chatTracker;
     private readonly UniversalisClient market;
+    private readonly DealScanner deals;
     private readonly ItemTooltip itemTooltip;
     private readonly WindowSystem windows = new("GilBanking");
     private readonly MainWindow mainWindow;
@@ -66,13 +67,14 @@ public sealed class Plugin : IDalamudPlugin
         ledger.ProtectSales = config.KeepSalesForever;
         if (config.ThinHistory) ledger.Thin(config.ThinAfterDays);
 
-        tracker = new GilTracker(framework, objectTable, gameGui, dataManager, ledger, config);
+        market = new UniversalisClient();
+        tracker = new GilTracker(framework, objectTable, gameGui, dataManager, ledger, config, market);
         chatTracker = new ChatTracker(chatGui, dataManager, ledger, config, () => tracker.CharacterKey);
 
-        market = new UniversalisClient();
         itemTooltip = new ItemTooltip(gameGui, objectTable, dataManager, market, ledger, config);
 
-        mainWindow = new MainWindow(ledger, tracker, chatTracker, config);
+        deals = new DealScanner(dataManager);
+        mainWindow = new MainWindow(ledger, tracker, chatTracker, config, deals);
         windows.AddWindow(mainWindow);
 
         var info = new CommandInfo(OnCommand)
@@ -120,6 +122,7 @@ public sealed class Plugin : IDalamudPlugin
 
         windows.RemoveAllWindows();
         market.Dispose();
+        deals.Dispose();
         chatTracker.Dispose();
         tracker.Dispose();
         ledger.Flush();

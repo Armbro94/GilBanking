@@ -42,6 +42,24 @@ public sealed unsafe class GilTracker : IDisposable
     private readonly List<(long Delta, DateTime At, string Note, string Key)> pendingOther = new();
     private readonly List<(long Signed, DateTime At)> retainerMoves = new();
 
+    private readonly UniversalisClient market;
+
+    // Gehilfen-Angebote: beim ersten stabilen Auslesen nach dem Rufen wird mit der gespeicherten Liste verglichen.
+    private sealed class PendingSale
+    {
+        public string Character = "";
+        public string Retainer = "";
+        public List<ListedItem> Sold = new();
+        public DateTime At;
+    }
+
+    private readonly List<PendingSale> pendingSales = new();
+    private DateTime nextListingCheck;
+    private string? activeRetainer;
+    private string listingSig = "";
+    private int listingStable;
+    private bool listingDiffDone;
+
     private readonly IFramework framework;
     private readonly IObjectTable objectTable;
     private readonly IGameGui gameGui;
@@ -71,8 +89,9 @@ public sealed unsafe class GilTracker : IDisposable
     public bool HasSession { get; private set; }
 
     public GilTracker(IFramework framework, IObjectTable objectTable, IGameGui gameGui, IDataManager data,
-                      Ledger ledger, Configuration config)
+                      Ledger ledger, Configuration config, UniversalisClient market)
     {
+        this.market = market;
         this.framework = framework;
         this.objectTable = objectTable;
         this.gameGui = gameGui;
@@ -185,6 +204,13 @@ public sealed unsafe class GilTracker : IDisposable
 
         PollAddons(now);
         ProcessPendingOther(now);
+
+        if (now >= nextListingCheck)
+        {
+            nextListingCheck = now.AddSeconds(1);
+            CheckRetainerListings();
+            ProcessPendingSales(now);
+        }
 
         if (now >= nextRetainer)
         {
@@ -449,6 +475,7 @@ public sealed unsafe class GilTracker : IDisposable
             {
                 Kind = EntryKind.Sale,
                 ItemName = "@retainer:" + kv.Key,
+                Retainer = kv.Key,
                 Quantity = 1,
                 TotalGil = delta,
                 Character = key,
@@ -485,6 +512,172 @@ public sealed unsafe class GilTracker : IDisposable
             }
         }
         return ledger.RetainerTotal(key);
+    }
+
+    // ---------- Gehilfen-Angebote ----------
+
+    public string? HomeWorldName()
+    {
+        if (!string.IsNullOrWhiteSpace(config.HomeWorld)) return config.HomeWorld.Trim();
+        var hw = objectTable.LocalPlayer?.HomeWorld.ValueNullable;
+        return hw?.Name.ToString();
+    }
+
+    /// <summary>
+    /// Liest die Marktbrett-Angebote des gerufenen Gehilfen. Beim ersten stabilen Auslesen nach dem Rufen wird mit der
+    /// beim letzten Besuch gespeicherten Liste verglichen: was fehlt, wurde verkauft (was du später selbst entfernst,
+    /// wird nur als neue Liste gespeichert).
+    /// </summary>
+    private void CheckRetainerListings()
+    {
+        var key = CharacterKey ?? CurrentKey();
+        if (key == null) return;
+
+        var rm = RetainerManager.Instance();
+        if (rm == null) return;
+
+        var active = rm->GetActiveRetainer();
+        if (active == null || active->RetainerId == 0)
+        {
+            activeRetainer = null;
+            listingSig = "";
+            listingStable = 0;
+            listingDiffDone = false;
+            return;
+        }
+
+        var name = active->NameString;
+        if (string.IsNullOrEmpty(name)) return;
+        if (name != activeRetainer)
+        {
+            activeRetainer = name;
+            listingSig = "";
+            listingStable = 0;
+            listingDiffDone = false;
+        }
+
+        var im = InventoryManager.Instance();
+        if (im == null) return;
+        var cont = im->GetInventoryContainer(InventoryType.RetainerMarket);
+        if (cont == null) return;
+
+        var map = new Dictionary<(uint Id, bool Hq), int>();
+        for (var i = 0; i < cont->Size; i++)
+        {
+            var it = cont->GetInventorySlot(i);
+            if (it == null || it->ItemId == 0) continue;
+            var hq = it->Flags.HasFlag(InventoryItem.ItemFlags.HighQuality);
+            var k = (it->ItemId, hq);
+            map.TryGetValue(k, out var q);
+            map[k] = q + (int)it->Quantity;
+        }
+
+        var items = map.OrderBy(kv => kv.Key.Id).ThenBy(kv => kv.Key.Hq)
+                       .Select(kv => new ListedItem { ItemId = kv.Key.Id, Hq = kv.Key.Hq, Qty = kv.Value })
+                       .ToList();
+        var sig = string.Join(";", items.Select(x => $"{x.ItemId}/{(x.Hq ? 1 : 0)}/{x.Qty}"));
+
+        // Erst auswerten, wenn der Inhalt einige Sekunden unverändert ist (die Liste wird nach dem Rufen nachgeladen).
+        if (sig != listingSig)
+        {
+            listingSig = sig;
+            listingStable = 1;
+            return;
+        }
+        listingStable++;
+        if (listingStable < 3) return;
+
+        // Eine leere Liste zählt nur, wenn das Angebotsfenster des Gehilfen offen war.
+        if (items.Count == 0 && !IsAddonVisible("RetainerSellList")) return;
+
+        var saved = ledger.GetListing(key, name);
+        if (!listingDiffDone)
+        {
+            listingDiffDone = true;
+            if (saved != null)
+            {
+                var sold = new List<ListedItem>();
+                foreach (var s in saved.Items)
+                {
+                    var cur = items.FirstOrDefault(x => x.ItemId == s.ItemId && x.Hq == s.Hq)?.Qty ?? 0;
+                    if (cur < s.Qty) sold.Add(new ListedItem { ItemId = s.ItemId, Hq = s.Hq, Qty = s.Qty - cur });
+                }
+                if (sold.Count > 0)
+                    pendingSales.Add(new PendingSale { Character = key, Retainer = name, Sold = sold, At = DateTime.UtcNow });
+            }
+        }
+
+        var same = saved != null && saved.Items.Count == items.Count &&
+                   saved.Items.Zip(items, (a, b) => a.ItemId == b.ItemId && a.Hq == b.Hq && a.Qty == b.Qty).All(x => x);
+        if (!same) ledger.SetListing(key, name, items);
+    }
+
+    /// <summary>
+    /// Ordnet erkannte Verkäufe den Einnahmen des Gehilfen zu: der Sammelbetrag wird durch Einträge je Item ersetzt.
+    /// Bei mehreren verschiedenen Items wird der Betrag nach Marktpreis (Universalis, Heimatwelt) verteilt.
+    /// </summary>
+    private void ProcessPendingSales(DateTime now)
+    {
+        for (var n = pendingSales.Count - 1; n >= 0; n--)
+        {
+            var ps = pendingSales[n];
+            if ((now - ps.At).TotalMinutes > 10) { pendingSales.RemoveAt(n); continue; }
+
+            var lumps = ledger.FindRetainerLumps(ps.Character, ps.Retainer);
+            if (lumps.Count == 0) continue;
+
+            var world = HomeWorldName();
+            var prices = new double[ps.Sold.Count];
+            var needWait = false;
+            if (ps.Sold.Count > 1 && world != null)
+            {
+                for (var i = 0; i < ps.Sold.Count; i++)
+                {
+                    var info = market.Get(ps.Sold[i].ItemId, world);
+                    if (info == null) { needWait = true; continue; }
+                    if (!info.Ok) continue;
+                    var p = ps.Sold[i].Hq ? info.MinHq : info.MinNq;
+                    prices[i] = p > 0 ? p : info.AvgSold;
+                }
+                if (needWait && (now - ps.At).TotalSeconds < 20) continue;
+            }
+
+            var known = prices.Where(p => p > 0).ToList();
+            var fallback = known.Count > 0 ? known.Average() : 1d;
+            var weights = ps.Sold.Select((s, i) => s.Qty * (prices[i] > 0 ? prices[i] : fallback)).ToList();
+            var wsum = weights.Sum();
+
+            var net = lumps.Sum(l => l.TotalGil);
+            var when = lumps.Max(l => l.TimeUtc);
+            var sheet = data.GetExcelSheet<Item>();
+            var adds = new List<LedgerEntry>();
+            long used = 0;
+            for (var i = 0; i < ps.Sold.Count; i++)
+            {
+                var s = ps.Sold[i];
+                var total = i == ps.Sold.Count - 1 ? net - used : (long)Math.Round(net * weights[i] / wsum);
+                used += total;
+                var itemName = sheet != null && sheet.TryGetRow(s.ItemId, out var row) ? row.Name.ToString() : "";
+
+                adds.Add(new LedgerEntry
+                {
+                    Kind = EntryKind.Sale,
+                    ItemId = s.ItemId,
+                    ItemName = itemName,
+                    IsHq = s.Hq,
+                    Quantity = Math.Max(1, s.Qty),
+                    TotalGil = total,
+                    Character = ps.Character,
+                    Source = "Retainer",
+                    Retainer = ps.Retainer,
+                    TimeUtc = when,
+                    Note = ps.Sold.Count > 1 ? L.T("note.estimated") : "",
+                });
+            }
+
+            ledger.ReplaceEntries(lumps, adds);
+            pendingSales.RemoveAt(n);
+        }
     }
 
     public void Dispose()

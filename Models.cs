@@ -25,6 +25,9 @@ public sealed class LedgerEntry
     public string Source { get; set; } = "Chat";
     public string Note { get; set; } = "";
 
+    /// <summary>Name des Gehilfen bei Retainer-Verkäufen (leer bei allem anderen).</summary>
+    public string Retainer { get; set; } = "";
+
     [JsonIgnore]
     public long UnitGil => Quantity > 0 ? TotalGil / Quantity : TotalGil;
 
@@ -45,6 +48,21 @@ public sealed class GilSnapshot
     public long RetainerGil { get; set; }
 }
 
+/// <summary>Ein Eintrag in der Angebotsliste eines Gehilfen.</summary>
+public sealed class ListedItem
+{
+    public uint ItemId { get; set; }
+    public bool Hq { get; set; }
+    public int Qty { get; set; }
+}
+
+/// <summary>Zuletzt gesehene Marktbrett-Angebote eines Gehilfen (zum Erkennen von Verkäufen beim nächsten Besuch).</summary>
+public sealed class RetainerListing
+{
+    public DateTime TimeUtc { get; set; } = DateTime.UtcNow;
+    public List<ListedItem> Items { get; set; } = new();
+}
+
 /// <summary>Gil-Stand zu Beginn des Tages (für "Heute"), bleibt bei Relog erhalten.</summary>
 public sealed class DaySession
 {
@@ -55,6 +73,9 @@ public sealed class DaySession
 public sealed class LedgerData
 {
     public Dictionary<string, DaySession> Sessions { get; set; } = new();
+
+    /// <summary>Angebotslisten je Charakter und Gehilfe.</summary>
+    public Dictionary<string, Dictionary<string, RetainerListing>> Listings { get; set; } = new();
     public List<LedgerEntry> Entries { get; set; } = new();
     public Dictionary<string, List<GilSnapshot>> Snapshots { get; set; } = new();
     public Dictionary<string, Dictionary<string, long>> Retainers { get; set; } = new();

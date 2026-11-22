@@ -11,7 +11,11 @@ Languages: English, Deutsch, Français (automatic from Dalamud's language, chang
 - **Sales:** searchable table of all sales/purchases, manual entries
 - **Items:** per-item statistics (revenue, quantity, average prices, profit)
 - **Retainers:** one card per retainer with gil, income in the chosen period and last income.
-  Retainer sales are detected from the retainer's gil increasing (read-only, no item names available).
+  Retainer sales are detected from the retainer's gil increasing. The items are found by comparing the retainer's
+  market listings with the list saved at the last visit (read-only): what is missing was sold, the price is estimated
+  from the gil received (split by market price when several items sold). Works for sales while you were offline.
+- **Deals:** finds items that are cheaper on another world than on your home world (Universalis), with profit
+  after 5 % tax, margin and sales per day. Manual reload with a cooldown, only a few requests per scan.
 - **NPC shops, market board purchases:** purchases/sales at NPC vendors and market board purchases are detected
   from gil changes while the matching window is open (read-only).
 - **Expenses & other:** repairs plus every other gil change (quests, mail, trades, items …) in its own tab.
