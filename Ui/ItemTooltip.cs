@@ -8,7 +8,7 @@ using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
 
-namespace GilBanking;
+namespace GilBanking.Windows;
 
 /// <summary>
 /// Zeigt neben dem Mauszeiger ein kleines Fenster mit dem Marktwert (Universalis), solange ein Item
@@ -315,7 +315,7 @@ public sealed unsafe class ItemTooltip
         if (tradable && !string.IsNullOrEmpty(scope))
         {
             info = market.Get(id, scope);
-            if (showHome) home = market.Get(id, homeWorld!);
+            if (showHome) home = market.Get(id, homeWorld!, lite: true); // leichter Abruf, nur Preise
         }
 
         var s = ImGuiHelpers.GlobalScale;
@@ -357,8 +357,14 @@ public sealed unsafe class ItemTooltip
             }
             else if (!info.Ok)
             {
-                ImGui.TextColored(Ui.Bad, L.T("tip.unreachable"));
-                ImGui.TextColored(Ui.Dim, info.Error ?? "");
+                // HTTP-Fehler (Universalis antwortet, aber mit Fehler) getrennt von "nicht erreichbar" (Netzwerk).
+                if (info.Error != null && info.Error.StartsWith("HTTP ", StringComparison.Ordinal))
+                    ImGui.TextColored(Ui.Bad, L.F("tip.httpError", info.Error));
+                else
+                {
+                    ImGui.TextColored(Ui.Bad, L.T("tip.unreachable"));
+                    ImGui.TextColored(Ui.Dim, info.Error ?? "");
+                }
             }
             else if (info.NoData)
             {
@@ -389,7 +395,13 @@ public sealed unsafe class ItemTooltip
                     ImGui.TextColored(Ui.Text, info.SaleVelocity.ToString("0.#", L.Culture));
                 }
                 if (info.LastUpload != null)
-                    ImGui.TextColored(Ui.Dim, L.F("tip.updated", L.Age(info.LastUpload.Value)));
+                {
+                    // Sehr alte Uploads deutlich kennzeichnen: der Preis kann längst überholt sein.
+                    if ((DateTime.UtcNow - info.LastUpload.Value).TotalHours > 24)
+                        ImGui.TextColored(Ui.Gold, L.F("tip.updatedOld", L.Age(info.LastUpload.Value)));
+                    else
+                        ImGui.TextColored(Ui.Dim, L.F("tip.updated", L.Age(info.LastUpload.Value)));
+                }
 
                 // Heimatwelt: lohnt es sich, dort einzustellen?
                 if (showHome)
@@ -514,7 +526,7 @@ public sealed unsafe class ItemTooltip
 
     private void CalcOwn(uint id)
     {
-        var sales = ledger.Data.Entries.Where(e => e.Kind == EntryKind.Sale && e.ItemId == id).ToList();
+        var sales = ledger.EntriesSnapshot().Where(e => e.Kind == EntryKind.Sale && e.ItemId == id).ToList();
         ownCount = sales.Count;
         var qty = sales.Sum(e => (long)Math.Max(1, e.Quantity));
         ownAvg = qty > 0 ? sales.Sum(e => e.TotalGil) / qty : 0;

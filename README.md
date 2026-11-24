@@ -14,6 +14,8 @@ Languages: English, Deutsch, Français (automatic from Dalamud's language, chang
   Retainer sales are detected from the retainer's gil increasing. The items are found by comparing the retainer's
   market listings with the list saved at the last visit (read-only): what is missing was sold, the price is estimated
   from the gil received (split by market price when several items sold). Works for sales while you were offline.
+- **Universalis access:** one shared, throttled client for tooltip, deals and retainer estimates (max. 2 requests at a time,
+  pause after HTTP 429). Home-world prices use the light `aggregated` endpoint, sale history is only fetched on demand.
 - **Deals:** finds items that are cheaper on another world than on your home world (Universalis), with profit
   after 5 % tax, margin and sales per day. Manual reload with a cooldown, only a few requests per scan.
 - **Watchlist (in the Deals tab):** search items by name, set a wish price and quality; every reload checks the cheapest
@@ -48,3 +50,11 @@ In-game, open Dalamud settings (`/xlsettings`) → **Experimental** → **Custom
 https://raw.githubusercontent.com/Available5673/GilBanking/refs/heads/main/repo.json
 
 Save, then open the plugin installer (`/xlplugins`) and search for **Gil-Banking**.
+
+## Project layout
+
+- `Tracking/` – reading the game: `GilTracker`, `ChatTracker`, `GilMessages`, `MarketReader`, `SalePricing`
+- `Data/` – `Ledger`, `Models`, `Configuration` (stays in namespace `GilBanking`, Dalamud stores its type name), `MarketStore` (price cache, own market data)
+- `Market/` – `Universalis` (shared client), `Deals`, `Worlds`, `Items`
+- `Windows/` code lives in `Ui/` – `MainWindow`, `ItemTooltip`, `Ui`, `Loc`
+- `Plugin.cs`, `GlobalUsings.cs` in the root

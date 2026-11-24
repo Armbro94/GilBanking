@@ -4,7 +4,7 @@ using System.Linq;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 
-namespace GilBanking;
+namespace GilBanking.Tracking;
 
 /// <summary>
 /// ALPHA: liest die Angebotsliste des Marktbretts (Fenster "ItemSearchResult"), während du sie ansiehst, und merkt

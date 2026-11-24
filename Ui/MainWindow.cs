@@ -6,7 +6,7 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Windowing;
 
-namespace GilBanking;
+namespace GilBanking.Windows;
 
 public sealed class MainWindow : Window
 {
@@ -164,7 +164,7 @@ public sealed class MainWindow : Window
 
     private DateTime FromUtc() => rangeIdx switch
     {
-        0 => DateTime.Now.Date.ToUniversalTime(),
+        0 => Clock.TodayStartUtc, // lokaler Kalendertag; die übrigen Zeiträume sind gleitende Fenster
         1 => DateTime.UtcNow.AddDays(-7),
         2 => DateTime.UtcNow.AddDays(-30),
         _ => DateTime.MinValue,
@@ -326,15 +326,15 @@ public sealed class MainWindow : Window
         {
             // Einnahmen je Retainer im gewählten Zeitraum (aus den erfassten Retainer-Verkäufen).
             var income = new Dictionary<string, (long Sum, DateTime Last)>();
-            foreach (var e in ledger.Data.Entries)
+            foreach (var e in ledger.EntriesSnapshot())
             {
-                if (e.Source != "Retainer" || e.TimeUtc < from) continue;
+                if (e.Source != EntrySources.Retainer || e.TimeUtc < from) continue;
                 if (ch != null && e.Character != ch) continue;
 
                 var rn = !string.IsNullOrEmpty(e.Retainer) ? e.Retainer
-                       : e.ItemName.StartsWith("@retainer:", StringComparison.Ordinal) ? e.ItemName.Substring(10) : "";
+                       : SpecialItems.IsRetainerLump(e.ItemName) ? SpecialItems.RetainerNameOf(e.ItemName) : "";
                 if (rn.Length == 0) continue;
-                var k = e.Character + "|@retainer:" + rn;
+                var k = e.Character + "|" + SpecialItems.Retainer(rn);
                 income.TryGetValue(k, out var cur);
                 income[k] = (cur.Sum + e.TotalGil, e.TimeUtc > cur.Last ? e.TimeUtc : cur.Last);
             }
@@ -343,7 +343,7 @@ public sealed class MainWindow : Window
             long totalGil = 0, totalIncome = 0;
             foreach (var r in ledger.RetainerList(ch))
             {
-                income.TryGetValue(r.Character + "|@retainer:" + r.Name, out var inc);
+                income.TryGetValue(r.Character + "|" + SpecialItems.Retainer(r.Name), out var inc);
                 cards.Add(new RetainerEntry(r.Character, r.Name, r.Gil, inc.Sum, inc.Sum > 0 ? inc.Last : null));
                 totalGil += r.Gil;
                 totalIncome += inc.Sum;
@@ -440,7 +440,7 @@ public sealed class MainWindow : Window
                     Quantity = Math.Max(1, manQty),
                     TotalGil = manTotal,
                     Character = tracker.CharacterKey ?? L.T("unknown.char"),
-                    Source = "Manual",
+                    Source = EntrySources.Manual,
                     Note = manNote.Trim(),
                 });
                 manName = "";
@@ -456,9 +456,13 @@ public sealed class MainWindow : Window
             }
         }
 
+        var lumps = ledger.CountRetainerLumps(ch);
+        if (lumps > 0)
+            ImGui.TextColored(Ui.Gold, L.F("sales.unresolved", lumps));
+
         var kf = kindFilter;
         var q = search;
-        var rows = salesCache.Get($"{BaseKey()}|{q}|{kf}", () => ledger.Data.Entries
+        var rows = salesCache.Get($"{BaseKey()}|{q}|{kf}", () => ledger.EntriesSnapshot()
             .Where(e => e.TimeUtc >= from && (ch == null || e.Character == ch))
             .Where(e => !e.IsExpenseEntry)
             .Where(e => kf == 0 || (int)e.Kind == kf - 1)
@@ -555,7 +559,7 @@ public sealed class MainWindow : Window
                 var own = new List<uint>();
                 if (config.DealsUseOwnItems)
                 {
-                    own = ledger.Data.Entries
+                    own = ledger.EntriesSnapshot()
                         .Where(e => e.Kind == EntryKind.Sale && e.ItemId != 0 && !e.IsExpenseEntry)
                         .GroupBy(e => e.ItemId)
                         .OrderByDescending(g => g.Max(x => x.TimeUtc))
@@ -654,7 +658,7 @@ public sealed class MainWindow : Window
 
         const ImGuiTableFlags flags = ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.Resizable |
                                       ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp;
-        if (ImGui.BeginTable("##gl_deals", 8, flags, new Vector2(0, ImGui.GetContentRegionAvail().Y)))
+        if (ImGui.BeginTable("##gl_deals", 9, flags, new Vector2(0, ImGui.GetContentRegionAvail().Y)))
         {
             ImGui.TableSetupScrollFreeze(0, 1);
             ImGui.TableSetupColumn(L.T("col.item"), ImGuiTableColumnFlags.WidthStretch, 3f);
@@ -665,6 +669,7 @@ public sealed class MainWindow : Window
             ImGui.TableSetupColumn(L.T("deals.colMargin"), ImGuiTableColumnFlags.WidthStretch, 1f);
             ImGui.TableSetupColumn(L.T("deals.colVelocity"), ImGuiTableColumnFlags.WidthStretch, 1f);
             ImGui.TableSetupColumn(L.T("deals.colAge"), ImGuiTableColumnFlags.WidthStretch, 1f);
+            ImGui.TableSetupColumn(L.T("deals.colNote"), ImGuiTableColumnFlags.WidthStretch, 1.3f);
             ImGui.TableHeadersRow();
 
             for (var i = 0; i < rows.Count; i++)
@@ -682,7 +687,9 @@ public sealed class MainWindow : Window
                 ImGui.TableNextColumn();
                 ImGui.TextColored(Ui.Gold, $"{Ui.Gil(r.BuyPrice)} \u00d7{r.BuyQty}");
                 ImGui.TableNextColumn();
-                ImGui.Text(Ui.Gil(r.HomePrice) + (r.HomeIsAverage ? " \u00d8" : ""));
+                ImGui.Text(Ui.Gil(r.HomePrice) + (r.HomeIsAverage ? " \u00d8" : r.Capped ? " ~" : ""));
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip(r.HomeIsAverage ? L.T("deals.homeAvg") : r.Capped ? L.T("deals.homeCapped") : L.T("deals.homeMin"));
                 ImGui.TableNextColumn();
                 ImGui.TextColored(Ui.Good, "+" + Ui.Gil(r.Profit));
                 ImGui.TableNextColumn();
@@ -691,6 +698,18 @@ public sealed class MainWindow : Window
                 ImGui.Text(r.Velocity.ToString("0.#", L.Culture));
                 ImGui.TableNextColumn();
                 ImGui.TextColored(Ui.Dim, r.Updated != null ? L.Age(r.Updated.Value) : "–");
+                ImGui.TableNextColumn();
+                if (r.Suspicious)
+                {
+                    ImGui.TextColored(Ui.Gold, "\u26a0 " + L.T("deals.check"));
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip(string.Join("\n", new[]
+                        {
+                            r.Unusual ? L.T("deals.flag.unusual") : "",
+                            r.Capped ? L.T("deals.flag.capped") : "",
+                            r.NoAverage ? L.T("deals.flag.noAvg") : "",
+                        }.Where(x => x.Length > 0)));
+                }
                 ImGui.PopID();
             }
             ImGui.EndTable();
@@ -768,7 +787,15 @@ public sealed class MainWindow : Window
 
             var results = deals.WatchRows;
             WatchItem? remove = null;
-            for (var i = 0; i < config.Watchlist.Count; i++)
+            // Treffer (Preis auf/unter Wunschpreis) stehen oben, danach in der Reihenfolge der Eingabe.
+            var order = Enumerable.Range(0, config.Watchlist.Count)
+                .OrderByDescending(k =>
+                {
+                    var wk = config.Watchlist[k];
+                    return results.FirstOrDefault(x => x.ItemId == wk.ItemId && x.Quality == wk.Quality)?.Hit == true;
+                })
+                .ToList();
+            foreach (var i in order)
             {
                 var w = config.Watchlist[i];
                 var row = results.FirstOrDefault(x => x.ItemId == w.ItemId && x.Quality == w.Quality);
@@ -814,7 +841,7 @@ public sealed class MainWindow : Window
 
         var v = expenseCache.Get(BaseKey(), () => new ExpenseView(
             ledger.GetExpenseTotals(ch, from),
-            ledger.Data.Entries
+            ledger.EntriesSnapshot()
                 .Where(e => e.IsExpenseEntry && e.TimeUtc >= from && (ch == null || e.Character == ch))
                 .OrderByDescending(e => e.TimeUtc)
                 .Take(1000)
@@ -864,7 +891,7 @@ public sealed class MainWindow : Window
                 ImGui.TableNextColumn();
                 ImGui.TextColored(Ui.Dim, e.TimeUtc.ToLocalTime().ToString("g", L.Culture));
                 ImGui.TableNextColumn();
-                var label = e.Source == "Other" ? (income ? L.T("exp.otherIn") : L.T("exp.otherOut")) : L.T("src.Repair");
+                var label = e.Source == EntrySources.Other ? (income ? L.T("exp.otherIn") : L.T("exp.otherOut")) : L.T("src.Repair");
                 ImGui.Text(label);
                 ImGui.TableNextColumn();
                 ImGui.TextColored(income ? Ui.Good : Ui.Bad, (income ? "+" : "-") + Ui.Gil(e.TotalGil));
@@ -1258,20 +1285,22 @@ public sealed class MainWindow : Window
             ImGui.Text(c);
             ImGui.SameLine();
             var isCurrent = c == current;
-            ImGui.BeginDisabled(isCurrent);
+            ImGui.BeginDisabled(isCurrent || ledger.ProtectSales);
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.55f, 0.18f, 0.18f, 1f));
             if (ImGui.SmallButton(L.T("btn.removeChar")) && ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift)
                 removeChar = c;
             ImGui.PopStyleColor();
             ImGui.EndDisabled();
             if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                ImGui.SetTooltip(isCurrent ? L.T("chars.current") : L.T("chars.tip"));
+                ImGui.SetTooltip(isCurrent ? L.T("chars.current") : ledger.ProtectSales ? L.T("chars.protected") : L.T("chars.tip"));
             ImGui.PopID();
         }
         if (removeChar != null)
         {
-            ledger.RemoveCharacter(removeChar);
-            if (charFilter == removeChar) charFilter = null;
+            if (ledger.RemoveCharacter(removeChar))
+            {
+                if (charFilter == removeChar) charFilter = null;
+            }
         }
 
         ImGui.Spacing();

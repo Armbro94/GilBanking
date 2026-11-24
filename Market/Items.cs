@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
 using Lumina.Excel.Sheets;
 
-namespace GilBanking;
+namespace GilBanking.Market;
 
 /// <summary>Hilfsfunktionen für Item-Namen (Suche in der Watchlist, Erkennung des Marktbrett-Items).</summary>
 internal static class Items

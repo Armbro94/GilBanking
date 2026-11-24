@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace GilBanking;
+namespace GilBanking.Tracking;
 
 /// <summary>
 /// Merkt sich kurz die Systemmeldungen mit Gil-Beträgen (z. B. "Für die Teilnahme … erhältst du 4.320 Gil."),

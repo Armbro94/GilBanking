@@ -4,7 +4,7 @@ using System.Linq;
 using Dalamud.Plugin.Services;
 using Lumina.Excel.Sheets;
 
-namespace GilBanking;
+namespace GilBanking.Market;
 
 /// <summary>Liste der öffentlichen Welten (mit Rechenzentrum) für die Auswahl der Heimatwelt.</summary>
 internal static class Worlds

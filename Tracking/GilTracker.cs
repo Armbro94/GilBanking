@@ -1,11 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using Lumina.Excel.Sheets;
 
-namespace GilBanking;
+namespace GilBanking.Tracking;
 
 /// <summary>
 /// Liest nur den Gil-Stand des Charakters und der Retainer aus dem Spielspeicher.
@@ -38,6 +39,9 @@ public sealed unsafe class GilTracker : IDisposable
 
     private readonly Dictionary<string, DateTime> addonSeen = new();
 
+    // Zwischenspeicher für IsAddonVisible (nur Spiel-Thread): Eigenschaften des Rückgabetyps von GetAddonByName.
+    private readonly Dictionary<Type, (System.Reflection.PropertyInfo? IsNull, System.Reflection.PropertyInfo? IsVisible)> addonProps = new();
+
     // Sonstige Gil-Änderungen warten kurz, ob eine Retainer-Bewegung dazu passt (Ein-/Auszahlung).
     private readonly List<(long Delta, DateTime At, string Note, string Key)> pendingOther = new();
     private readonly List<(long Signed, DateTime At)> retainerMoves = new();
@@ -51,7 +55,15 @@ public sealed unsafe class GilTracker : IDisposable
         public string Retainer = "";
         public List<ListedItem> Sold = new();
         public DateTime At;
+        public Task<double[]>? PriceTask;
+        public double[]? Weights;
     }
+
+    /// <summary>
+    /// So lange wartet ein erkannter Verkauf (Listing-Diff) auf die zugehörige Gil-Einnahme des Gehilfen. Kommt innerhalb
+    /// dieser Zeit keine, war es kein Verkauf (z. B. selbst entferntes Angebot) und der Diff wird verworfen.
+    /// </summary>
+    private static readonly TimeSpan SaleGrace = TimeSpan.FromMinutes(3);
 
     private readonly List<PendingSale> pendingSales = new();
     private DateTime nextListingCheck;
@@ -168,7 +180,7 @@ public sealed unsafe class GilTracker : IDisposable
             }
 
             // "Heute": der Startwert des Tages bleibt bei Relog erhalten und wird erst bei einem neuen Tag zurückgesetzt.
-            SessionStartGil = ledger.DayStart(key, gil);
+            SessionStartGil = ledger.DayStart(key, gil, lastGil);
 
             CurrentGil = gil;
 
@@ -264,11 +276,11 @@ public sealed unsafe class GilTracker : IDisposable
                 ledger.AddEntry(new LedgerEntry
                 {
                     Kind = EntryKind.Purchase,
-                    ItemName = "@repair",
+                    ItemName = SpecialItems.Repair,
                     Quantity = 1,
                     TotalGil = total,
                     Character = key,
-                    Source = "Repair",
+                    Source = EntrySources.Repair,
                 });
             }
             return;
@@ -304,7 +316,7 @@ public sealed unsafe class GilTracker : IDisposable
                 Quantity = Math.Max(1, qty),
                 TotalGil = total,
                 Character = key,
-                Source = "NPC",
+                Source = EntrySources.Npc,
             });
             return;
         }
@@ -320,7 +332,7 @@ public sealed unsafe class GilTracker : IDisposable
                     Quantity = 1,
                     TotalGil = total,
                     Character = key,
-                    Source = "Market",
+                    Source = EntrySources.Market,
                 });
             }
             return;
@@ -356,11 +368,11 @@ public sealed unsafe class GilTracker : IDisposable
             ledger.AddEntry(new LedgerEntry
             {
                 Kind = p.Delta > 0 ? EntryKind.Sale : EntryKind.Purchase,
-                ItemName = "@other",
+                ItemName = SpecialItems.Other,
                 Quantity = 1,
                 TotalGil = Math.Abs(p.Delta),
                 Character = p.Key,
-                Source = "Other",
+                Source = EntrySources.Other,
                 Note = NoteFor(p),
             });
         }
@@ -409,9 +421,15 @@ public sealed unsafe class GilTracker : IDisposable
             if (r == null) return false;
             if (r is nint p) return p != 0;
 
+            // Die Form des Rückgabetyps ist je Dalamud-Version fest: Reflection-Suche nur einmal pro Typ, danach aus dem Cache.
             var t = r.GetType();
-            if (t.GetProperty("IsNull")?.GetValue(r) is true) return false;
-            var vis = t.GetProperty("IsVisible")?.GetValue(r);
+            if (!addonProps.TryGetValue(t, out var props))
+            {
+                props = (t.GetProperty("IsNull"), t.GetProperty("IsVisible"));
+                addonProps[t] = props;
+            }
+            if (props.IsNull?.GetValue(r) is true) return false;
+            var vis = props.IsVisible?.GetValue(r);
             return vis is bool b ? b : true;
         }
         catch
@@ -445,7 +463,8 @@ public sealed unsafe class GilTracker : IDisposable
     /// </summary>
     private void CheckRetainerIncome(string key, Dictionary<string, long> current)
     {
-        if (!ledger.Data.Retainers.TryGetValue(key, out var previous)) return;
+        var previous = ledger.GetRetainerSnapshot(key);
+        if (previous == null) return;
 
         var now = DateTime.UtcNow;
         var bank = IsAddonVisible("Bank") || OpenAddons(now).Contains("Bank");
@@ -474,12 +493,12 @@ public sealed unsafe class GilTracker : IDisposable
             ledger.AddEntry(new LedgerEntry
             {
                 Kind = EntryKind.Sale,
-                ItemName = "@retainer:" + kv.Key,
+                ItemName = SpecialItems.Retainer(kv.Key),
                 Retainer = kv.Key,
                 Quantity = 1,
                 TotalGil = delta,
                 Character = key,
-                Source = "Retainer",
+                Source = EntrySources.Retainer,
             });
         }
     }
@@ -602,7 +621,9 @@ public sealed unsafe class GilTracker : IDisposable
                     var cur = items.FirstOrDefault(x => x.ItemId == s.ItemId && x.Hq == s.Hq)?.Qty ?? 0;
                     if (cur < s.Qty) sold.Add(new ListedItem { ItemId = s.ItemId, Hq = s.Hq, Qty = s.Qty - cur });
                 }
-                if (sold.Count > 0)
+                // Nur vormerken: ob es wirklich Verkäufe waren, entscheidet ProcessPendingSales daran, ob der Gehilfe
+                // Gil eingenommen hat (offener Sammelbetrag). Ohne Gil-Anstieg bleibt es bei der neuen Liste.
+                if (sold.Count > 0 && config.TrackRetainerSales)
                     pendingSales.Add(new PendingSale { Character = key, Retainer = name, Sold = sold, At = DateTime.UtcNow });
             }
         }
@@ -613,52 +634,65 @@ public sealed unsafe class GilTracker : IDisposable
     }
 
     /// <summary>
-    /// Ordnet erkannte Verkäufe den Einnahmen des Gehilfen zu: der Sammelbetrag wird durch Einträge je Item ersetzt.
-    /// Bei mehreren verschiedenen Items wird der Betrag nach Marktpreis (Universalis, Heimatwelt) verteilt.
+    /// Ordnet erkannte Verkäufe den Einnahmen des Gehilfen zu: der Sammelbetrag ("noch nicht aufgeschlüsselt") wird durch
+    /// Einträge je Item ersetzt.
+    ///  - Genau ein Item fehlt: der gesamte Betrag gehört diesem Item, keine Schätzung.
+    ///  - Mehrere Items: Aufteilung nach üblichem Verkaufspreis (Universalis-Verlauf, sonst Durchschnitt/Minimum der Heimatwelt),
+    ///    als "geschätzt" markiert. Passt der Betrag nur zu einem Teil der Items, gelten die übrigen als selbst entfernt.
+    ///  - Ohne passenden Sammelbetrag wird der Diff nach SaleGrace verworfen.
+    /// Ersetzte Sammelbeträge gibt es danach nicht mehr, sie können also nicht doppelt gebucht werden.
     /// </summary>
     private void ProcessPendingSales(DateTime now)
     {
         for (var n = pendingSales.Count - 1; n >= 0; n--)
         {
             var ps = pendingSales[n];
-            if ((now - ps.At).TotalMinutes > 10) { pendingSales.RemoveAt(n); continue; }
-
             var lumps = ledger.FindRetainerLumps(ps.Character, ps.Retainer);
-            if (lumps.Count == 0) continue;
-
-            var world = HomeWorldName();
-            var prices = new double[ps.Sold.Count];
-            var needWait = false;
-            if (ps.Sold.Count > 1 && world != null)
+            if (lumps.Count == 0)
             {
-                for (var i = 0; i < ps.Sold.Count; i++)
-                {
-                    var info = market.Get(ps.Sold[i].ItemId, world);
-                    if (info == null) { needWait = true; continue; }
-                    if (!info.Ok) continue;
-                    var p = ps.Sold[i].Hq ? info.MinHq : info.MinNq;
-                    prices[i] = p > 0 ? p : info.AvgSold;
-                }
-                if (needWait && (now - ps.At).TotalSeconds < 20) continue;
+                if (now - ps.At > SaleGrace) pendingSales.RemoveAt(n);
+                continue;
             }
-
-            var known = prices.Where(p => p > 0).ToList();
-            var fallback = known.Count > 0 ? known.Average() : 1d;
-            var weights = ps.Sold.Select((s, i) => s.Qty * (prices[i] > 0 ? prices[i] : fallback)).ToList();
-            var wsum = weights.Sum();
 
             var net = lumps.Sum(l => l.TotalGil);
             var when = lumps.Max(l => l.TimeUtc);
+            var sold = ps.Sold;
+            var estimated = false;
+
+            if (sold.Count > 1)
+            {
+                // Preise nur bei mehreren Items und nur im Hintergrund laden (Verlauf, sonst aggregated).
+                var world = HomeWorldName();
+                double[] prices;
+                if (world == null)
+                {
+                    prices = new double[sold.Count];
+                }
+                else
+                {
+                    ps.PriceTask ??= Task.Run(() => SalePricing.LoadAsync(market, world, ps.Sold));
+                    if (!ps.PriceTask.IsCompleted && (now - ps.At).TotalSeconds < 25) continue;
+                    prices = ps.PriceTask.IsCompletedSuccessfully ? ps.PriceTask.Result : new double[sold.Count];
+                }
+
+                estimated = true;
+                var keep = ChooseSoldSubset(sold, prices, net);
+                if (keep.Count < sold.Count) sold = keep.Select(i => ps.Sold[i]).ToList();
+                var weights = BuildWeights(sold, keep.Count < ps.Sold.Count ? keep.Select(i => prices[i]).ToArray() : prices);
+                ps.Sold = sold;
+                ps.Weights = weights;
+            }
+
+            var shares = sold.Count == 1
+                ? new[] { net }                       // ein Item: kein Schätzen, der ganze Betrag gehört ihm
+                : Allocate(net, ps.Weights ?? sold.Select(s => (double)s.Qty).ToArray());
+
             var sheet = data.GetExcelSheet<Item>();
             var adds = new List<LedgerEntry>();
-            long used = 0;
-            for (var i = 0; i < ps.Sold.Count; i++)
+            for (var i = 0; i < sold.Count; i++)
             {
-                var s = ps.Sold[i];
-                var total = i == ps.Sold.Count - 1 ? net - used : (long)Math.Round(net * weights[i] / wsum);
-                used += total;
+                var s = sold[i];
                 var itemName = sheet != null && sheet.TryGetRow(s.ItemId, out var row) ? row.Name.ToString() : "";
-
                 adds.Add(new LedgerEntry
                 {
                     Kind = EntryKind.Sale,
@@ -666,18 +700,102 @@ public sealed unsafe class GilTracker : IDisposable
                     ItemName = itemName,
                     IsHq = s.Hq,
                     Quantity = Math.Max(1, s.Qty),
-                    TotalGil = total,
+                    TotalGil = shares[i],
                     Character = ps.Character,
-                    Source = "Retainer",
+                    Source = EntrySources.Retainer,
                     Retainer = ps.Retainer,
                     TimeUtc = when,
-                    Note = ps.Sold.Count > 1 ? L.T("note.estimated") : "",
+                    Note = estimated ? L.T("note.estimated") : "",
                 });
             }
 
+            // Erhöht die Revision: Verkäufe- und Items-Ansicht rechnen danach sofort neu.
+            // false = die Sammelbeträge waren schon ersetzt (anderer Verkauf desselben Gehilfen): nichts doppelt buchen.
             ledger.ReplaceEntries(lumps, adds);
             pendingSales.RemoveAt(n);
         }
+    }
+
+    /// <summary>Gewicht je Item = Menge × Preis; Items ohne Preis bekommen den Durchschnitt der bekannten (oder nur die Menge).</summary>
+    private static double[] BuildWeights(List<ListedItem> sold, double[] prices)
+    {
+        var known = prices.Where(p => p > 0).ToList();
+        var fallback = known.Count > 0 ? known.Average() : 1d;
+        return sold.Select((s, i) => Math.Max(1, s.Qty) * (prices[i] > 0 ? prices[i] : fallback)).ToArray();
+    }
+
+    /// <summary>
+    /// Passt der Sammelbetrag deutlich schlechter zur Summe aller Items als zu einem Teil davon, wurde der Rest vermutlich
+    /// selbst vom Markt genommen. Nur mit bekannten Preisen und höchstens 10 Items; sonst gelten alle als verkauft.
+    /// Die Preise sind Brutto (5 % Marktsteuer werden abgezogen).
+    /// </summary>
+    private static List<int> ChooseSoldSubset(List<ListedItem> sold, double[] prices, long net)
+    {
+        var all = Enumerable.Range(0, sold.Count).ToList();
+        if (sold.Count > 10 || net <= 0 || prices.Any(p => p <= 0)) return all;
+
+        double Expected(int mask)
+        {
+            double sum = 0;
+            for (var i = 0; i < sold.Count; i++)
+                if ((mask & (1 << i)) != 0) sum += Math.Max(1, sold[i].Qty) * prices[i] * 0.95;
+            return sum;
+        }
+        double Err(int mask) => Math.Abs(Expected(mask) - net) / net;
+
+        var full = (1 << sold.Count) - 1;
+        if (Err(full) <= 0.35) return all;
+
+        var best = full;
+        var bestErr = Err(full);
+        for (var mask = 1; mask < full; mask++)
+        {
+            var e = Err(mask);
+            if (e < bestErr - 1e-9) { best = mask; bestErr = e; }
+        }
+        // Nur eine Teilmenge wählen, wenn sie klar plausibel ist.
+        if (best == full || bestErr > 0.25) return all;
+        return all.Where(i => (best & (1 << i)) != 0).ToList();
+    }
+
+    /// <summary>
+    /// Verteilt den Betrag nach Gewichten auf ganze Gil (größter Rest). Ist genug da, bekommt jedes Item mindestens 1 Gil.
+    /// </summary>
+    private static long[] Allocate(long net, double[] weights)
+    {
+        var n = weights.Length;
+        var result = new long[n];
+        var sum = weights.Sum();
+        if (n == 0) return result;
+        if (sum <= 0) { weights = Enumerable.Repeat(1d, n).ToArray(); sum = n; }
+
+        var rest = new double[n];
+        long used = 0;
+        for (var i = 0; i < n; i++)
+        {
+            var exact = net * weights[i] / sum;
+            result[i] = (long)Math.Floor(exact);
+            rest[i] = exact - result[i];
+            used += result[i];
+        }
+        for (var left = net - used; left > 0; left--)
+        {
+            var k = Array.IndexOf(rest, rest.Max());
+            result[k]++;
+            rest[k] = -1;
+        }
+
+        if (net >= n)
+        {
+            for (var i = 0; i < n; i++)
+            {
+                if (result[i] > 0) continue;
+                var donor = Array.IndexOf(result, result.Max());
+                result[donor]--;
+                result[i] = 1;
+            }
+        }
+        return result;
     }
 
     public void Dispose()

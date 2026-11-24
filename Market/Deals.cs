@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
 using Lumina.Excel.Sheets;
 
-namespace GilBanking;
+namespace GilBanking.Market;
 
 public sealed class DealRow
 {
@@ -25,6 +25,27 @@ public sealed class DealRow
     public double Margin { get; init; }
     public DateTime? Updated { get; init; }
     public long TotalProfit => Profit * Math.Max(1, BuyQty);
+
+    /// <summary>Heimatpreis wurde auf den üblichen Verkaufspreis begrenzt (Min lag weit darüber).</summary>
+    public bool Capped { get; init; }
+
+    /// <summary>Auf der Heimatwelt gibt es keinen Durchschnittspreis (kaum Verkäufe): Preis nicht belegbar.</summary>
+    public bool NoAverage { get; init; }
+
+    /// <summary>Sehr hohe Marge oder Kaufpreis weit unter dem Heimat-Durchschnitt: vor dem Kauf prüfen.</summary>
+    public bool Unusual { get; init; }
+
+    public bool Suspicious => Capped || NoAverage || Unusual;
+
+    /// <summary>Rangfolge: Gewinn × Stück, die man in etwa 3 Tagen verkaufen kann; Verdächtige zählen nur zu 25 %.</summary>
+    public double Score
+    {
+        get
+        {
+            var sellable = Math.Max(1d, Math.Min(BuyQty, Math.Floor(Velocity * 3)));
+            return Profit * sellable * (Suspicious ? 0.25 : 1d);
+        }
+    }
 }
 
 public sealed class WatchRow
@@ -79,14 +100,14 @@ public sealed class DealScanner : IDisposable
     }
 
     private readonly IDataManager data;
-    private readonly HttpClient http;
+    private readonly UniversalisClient market;
     private readonly CancellationTokenSource cts = new();
 
-    public DealScanner(IDataManager data)
+    /// <summary>Alle Abfragen laufen über den gemeinsamen Universalis-Zugriff (gleiche Drosselung wie Tooltip und Gehilfen-Schätzung).</summary>
+    public DealScanner(IDataManager data, UniversalisClient market)
     {
         this.data = data;
-        http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("GilBanking-DalamudPlugin/0.1");
+        this.market = market;
     }
 
     public volatile bool Running;
@@ -136,7 +157,8 @@ public sealed class DealScanner : IDisposable
 
             SetStatus("deals.st.load", ids.Count.ToString());
             var scopeItems = await FetchItems(req.Scope, ids);
-            var homeItems = await FetchItems(req.HomeWorld, ids);
+            // Heimatwelt: nur Preise und Verkaufsgeschwindigkeit, dafür reicht der leichte "aggregated"-Abruf.
+            var homeItems = await FetchHome(req.HomeWorld, ids);
 
             var sheet = data.GetExcelSheet<Item>();
 
@@ -193,13 +215,20 @@ public sealed class DealScanner : IDisposable
                         if (vel <= 0) vel = home.Vel;
                     }
 
-                    // Zielpreis: günstigstes Angebot auf der Heimatwelt, aber nie weit über dem üblichen Verkaufspreis
-                    // (einzelne überteuerte Angebote würden sonst Gewinne vortäuschen).
+                    // Zielpreis: günstigstes Angebot auf der Heimatwelt, aber höchstens 25 % über dem üblichen Verkaufspreis
+                    // (einzelne überteuerte Angebote würden sonst Gewinne vortäuschen; vorher 50 %).
+                    const double CapFactor = 1.25;
                     double target;
                     bool isAvg;
+                    var capped = false;
                     if (homeMin > 0)
                     {
-                        target = homeAvg > 0 ? Math.Min(homeMin, homeAvg * 1.5) : homeMin;
+                        if (homeAvg > 0 && homeMin > homeAvg * CapFactor)
+                        {
+                            target = homeAvg * CapFactor;
+                            capped = true;
+                        }
+                        else target = homeMin;
                         isAvg = false;
                     }
                     else if (homeAvg > 0)
@@ -213,6 +242,9 @@ public sealed class DealScanner : IDisposable
                     var margin = other.Price > 0 ? profit / other.Price * 100d : 0;
                     if (profit < req.MinProfit || margin < req.MinMargin || vel < req.MinVelocity) continue;
 
+                    // Extreme Treffer nicht verbieten, aber kennzeichnen und weiter unten einsortieren.
+                    var unusual = margin >= 300 || (homeAvg > 0 && other.Price < homeAvg * 0.2);
+
                     rows.Add(new DealRow
                     {
                         ItemId = id,
@@ -223,6 +255,9 @@ public sealed class DealScanner : IDisposable
                         BuyQty = other.Qty,
                         HomePrice = (long)target,
                         HomeIsAverage = isAvg,
+                        Capped = capped,
+                        NoAverage = homeAvg <= 0,
+                        Unusual = unusual,
                         Velocity = vel,
                         Profit = profit,
                         Margin = margin,
@@ -231,7 +266,7 @@ public sealed class DealScanner : IDisposable
                 }
             }
 
-            Rows = rows.OrderByDescending(r => r.TotalProfit).Take(200).ToList();
+            Rows = rows.OrderByDescending(r => r.Score).ThenByDescending(r => r.TotalProfit).Take(200).ToList();
             LastScanUtc = DateTime.UtcNow;
             Version++;
             SetStatus(rows.Count > 0 ? "deals.st.done" : "deals.st.noDeals", rows.Count.ToString());
@@ -258,10 +293,10 @@ public sealed class DealScanner : IDisposable
                 ? $"dcName={Uri.EscapeDataString(req.HomeDc)}"
                 : $"world={Uri.EscapeDataString(req.HomeWorld)}";
             var url = $"https://universalis.app/api/v2/extra/stats/most-recently-updated?{q}&entries=60";
-            using var resp = await http.GetAsync(url, cts.Token).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode) return result;
+            var (status, body) = await market.SendAsync(url, cts.Token).ConfigureAwait(false);
+            if (status != 200) return result;
 
-            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false));
+            using var doc = JsonDocument.Parse(body);
             if (doc.RootElement.TryGetProperty("items", out var arr) && arr.ValueKind == JsonValueKind.Array)
             {
                 foreach (var it in arr.EnumerateArray())
@@ -278,10 +313,10 @@ public sealed class DealScanner : IDisposable
     {
         var result = new Dictionary<uint, ItemMarket>();
         var url = $"https://universalis.app/api/v2/{Uri.EscapeDataString(scope)}/{string.Join(",", ids)}?listings=10&entries=0";
-        using var resp = await http.GetAsync(url, cts.Token).ConfigureAwait(false);
-        if (!resp.IsSuccessStatusCode) throw new HttpRequestException($"HTTP {(int)resp.StatusCode}");
+        var (status, body) = await market.SendAsync(url, cts.Token).ConfigureAwait(false);
+        if (status != 200) throw new HttpRequestException($"HTTP {status}");
 
-        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false));
+        using var doc = JsonDocument.Parse(body);
         var root = doc.RootElement;
 
         if (root.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Object)
@@ -292,6 +327,34 @@ public sealed class DealScanner : IDisposable
         else if (ids.Count == 1)
         {
             result[ids[0]] = Parse(root); // Einzelabruf hat eine andere Form
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Preise der Heimatwelt aus dem leichten Sammelabruf. Für jede Qualität entsteht ein Platzhalter-Angebot mit dem
+    /// niedrigsten Preis, so kann die weitere Berechnung unverändert bleiben. Bei Fehlern: ausführliche Abfrage wie bisher.
+    /// </summary>
+    private async Task<Dictionary<uint, ItemMarket>> FetchHome(string world, List<uint> ids)
+    {
+        var agg = await market.GetAggregatedAsync(world, ids, cts.Token).ConfigureAwait(false);
+        if (agg == null || agg.Count == 0) return await FetchItems(world, ids).ConfigureAwait(false);
+
+        var result = new Dictionary<uint, ItemMarket>();
+        foreach (var kv in agg)
+        {
+            var m = new ItemMarket
+            {
+                AvgNq = kv.Value.Nq.Avg,
+                AvgHq = kv.Value.Hq.Avg,
+                VelNq = kv.Value.Nq.Velocity,
+                VelHq = kv.Value.Hq.Velocity,
+                Vel = kv.Value.Nq.Velocity + kv.Value.Hq.Velocity,
+                Upload = kv.Value.Upload,
+            };
+            if (kv.Value.Nq.Min > 0) m.Listings.Add(new Listing { Price = kv.Value.Nq.Min, Qty = 1, Hq = false, World = world });
+            if (kv.Value.Hq.Min > 0) m.Listings.Add(new Listing { Price = kv.Value.Hq.Min, Qty = 1, Hq = true, World = world });
+            result[kv.Key] = m;
         }
         return result;
     }
@@ -330,8 +393,6 @@ public sealed class DealScanner : IDisposable
 
     public void Dispose()
     {
-        cts.Cancel();
-        http.Dispose();
-        cts.Dispose();
+        cts.Cancel(); // nicht freigeben: ein laufender Scan greift noch kurz auf das Token zu
     }
 }

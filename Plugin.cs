@@ -81,7 +81,7 @@ public sealed class Plugin : IDalamudPlugin
 
         itemTooltip = new ItemTooltip(gameGui, objectTable, dataManager, market, ledger, config, localMarket);
 
-        deals = new DealScanner(dataManager);
+        deals = new DealScanner(dataManager, market);
         mainWindow = new MainWindow(ledger, tracker, chatTracker, config, deals, prices, localMarket);
         windows.AddWindow(mainWindow);
 
@@ -129,13 +129,15 @@ public sealed class Plugin : IDalamudPlugin
         commands.RemoveHandler(ShortCommand);
 
         windows.RemoveAllWindows();
+        // Erst die Verbraucher, zuletzt der Universalis-Client (Hintergrundaufgaben dürfen nicht auf einen
+        // schon entladenen Client treffen).
         marketReader.Dispose();
+        chatTracker.Dispose();
+        tracker.Dispose();
+        deals.Dispose();
         market.Dispose();
         prices.Flush();
         localMarket.Flush();
-        deals.Dispose();
-        chatTracker.Dispose();
-        tracker.Dispose();
         ledger.Flush();
     }
 }

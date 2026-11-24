@@ -6,7 +6,7 @@ using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Utility;
 
-namespace GilBanking;
+namespace GilBanking.Windows;
 
 /// <summary>Gemeinsame Farben, Formatierung und selbstgezeichnete Karten/Diagramme.</summary>
 internal static class Ui

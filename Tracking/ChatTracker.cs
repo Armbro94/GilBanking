@@ -10,7 +10,7 @@ using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Plugin.Services;
 using Lumina.Excel.Sheets;
 
-namespace GilBanking;
+namespace GilBanking.Tracking;
 
 /// <summary>
 /// Liest Systemnachrichten mit und erkennt Verkäufe/Einkäufe. Rein passiv:
@@ -246,7 +246,7 @@ public sealed class ChatTracker : IDisposable
             Quantity = quantity,
             TotalGil = gil,
             Character = characterKey() ?? L.T("unknown.char"),
-            Source = "Chat",
+            Source = EntrySources.Chat,
         });
     }
 

@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 
-namespace GilBanking;
+namespace GilBanking.Windows;
 
 /// <summary>
 /// Übersetzungen (Englisch, Deutsch, Französisch). Reihenfolge je Eintrag: en, de, fr.
@@ -310,8 +310,8 @@ internal static class L
             "Verkaufsdaten nie löschen (Schutz)",
             "Ne jamais supprimer les données de vente (protection)"),
         ["protect.help"] = A(
-            "While on, single entries and \"Delete all data\" are disabled, so your sales stay forever. A daily backup (ledger.json.bak) is kept as well.",
-            "Solange aktiv, sind Einzellöschen und \"Alle Daten löschen\" gesperrt, deine Verkäufe bleiben dauerhaft erhalten. Zusätzlich gibt es ein tägliches Backup (ledger.json.bak).",
+            "While on, single entries, removing characters and \"Delete all data\" are disabled, so your sales stay forever. A daily backup (ledger.json.bak) is kept as well.",
+            "Solange aktiv, sind Einzellöschen, Charakter entfernen und \"Alle Daten löschen\" gesperrt, deine Verkäufe bleiben dauerhaft erhalten. Zusätzlich gibt es ein tägliches Backup (ledger.json.bak).",
             "Tant que l'option est active, la suppression d'entrées et « Supprimer toutes les données » sont désactivées : vos ventes restent conservées. Une sauvegarde quotidienne (ledger.json.bak) est aussi conservée."),
         ["debug.gil"] = A(
             "Latest gil changes (amount | open windows | hovered item id):",
@@ -483,6 +483,25 @@ internal static class L
         ["store.applied"] = A("Folder applied.", "Ordner übernommen.", "Dossier appliqué."),
         ["store.current"] = A("Current folder: {0}", "Aktueller Ordner: {0}", "Dossier actuel : {0}"),
 
+        ["chars.protected"] = A(
+            "Protected: turn off \"Never delete sales data (protection)\" below to remove a character.",
+            "Geschützt: Schalte unten \"Verkaufsdaten nie löschen (Schutz)\" aus, um einen Charakter zu entfernen.",
+            "Protégé : désactivez plus bas « Ne jamais supprimer les données de vente (protection) » pour retirer un personnage."),
+        ["name.unresolved"] = A("not itemised yet", "noch nicht aufgeschlüsselt", "pas encore détaillé"),
+        ["sales.unresolved"] = A(
+            "{0} retainer income entries are not itemised yet. Summon the retainer once: the sold items are found from the listing and the amount is split up.",
+            "{0} Gehilfen-Einnahmen sind noch nicht aufgeschlüsselt. Rufe den Gehilfen einmal: Die verkauften Items werden über seine Angebote gefunden und der Betrag aufgeteilt.",
+            "{0} revenus de servants ne sont pas encore détaillés. Appelez le servant une fois : les objets vendus sont retrouvés via ses annonces et le montant est réparti."),
+        ["tip.httpError"] = A("Universalis error ({0})", "Universalis-Fehler ({0})", "Erreur Universalis ({0})"),
+        ["tip.updatedOld"] = A("Outdated: last upload {0}", "Veraltet: letzter Upload {0}", "Périmé : dernier envoi {0}"),
+        ["deals.colNote"] = A("Note", "Hinweis", "Remarque"),
+        ["deals.check"] = A("check", "prüfen", "vérifier"),
+        ["deals.homeMin"] = A("Home price = lowest listing on your home world", "Heimatpreis = günstigstes Angebot auf deiner Heimatwelt", "Prix = offre la moins chère sur votre monde"),
+        ["deals.homeAvg"] = A("Home price = average sale price (\u00d8), no listing on your home world", "Heimatpreis = Durchschnitt der Verkäufe (\u00d8), kein Angebot auf deiner Heimatwelt", "Prix = moyenne des ventes (\u00d8), aucune offre sur votre monde"),
+        ["deals.homeCapped"] = A("Home price (~) limited to 125 % of the average sale price, the lowest listing was much higher", "Heimatpreis (~) auf 125 % des Verkaufs-Durchschnitts begrenzt, das günstigste Angebot lag deutlich darüber", "Prix (~) limité à 125 % de la moyenne des ventes, l'offre la moins chère était bien plus haute"),
+        ["deals.flag.unusual"] = A("Unusually high margin or very cheap compared to the home average: check before buying", "Ungewöhnlich hohe Marge oder sehr billig gegenüber dem Heimat-Durchschnitt: vor dem Kauf prüfen", "Marge très élevée ou très bon marché par rapport à la moyenne : à vérifier avant d'acheter"),
+        ["deals.flag.capped"] = A("Home price was capped (lowest home listing far above average)", "Heimatpreis wurde begrenzt (günstigstes Heimat-Angebot weit über dem Durchschnitt)", "Prix limité (offre la moins chère bien au-dessus de la moyenne)"),
+        ["deals.flag.noAvg"] = A("No average sale price on your home world: hardly any sales", "Kein Verkaufs-Durchschnitt auf deiner Heimatwelt: kaum Verkäufe", "Pas de prix moyen sur votre monde : presque aucune vente"),
         ["age.now"] = A("just now", "gerade eben", "à l'instant"),
         ["age.min"] = A("{0} min ago", "vor {0} Min.", "il y a {0} min"),
         ["age.hour"] = A("{0} h ago", "vor {0} Std.", "il y a {0} h"),
@@ -532,9 +551,9 @@ internal static class L
     /// <summary>Anzeigename eines Eintrags; "@repair" ist die Markierung für Reparaturkosten.</summary>
     public static string ItemName(string? name) =>
         string.IsNullOrEmpty(name) ? T("unknown.item")
-        : name == "@repair" ? T("src.Repair")
-        : name == "@other" ? T("src.Other")
-        : name.StartsWith("@retainer:") ? $"{T("name.retainer")}: {name.Substring("@retainer:".Length)}"
+        : name == SpecialItems.Repair ? T("src.Repair")
+        : name == SpecialItems.Other ? T("src.Other")
+        : SpecialItems.IsRetainerLump(name) ? $"{T("name.retainer")}: {SpecialItems.RetainerNameOf(name)} ({T("name.unresolved")})"
         : name;
 
     /// <summary>Wie lange etwas her ist, z. B. "vor 5 Min.".</summary>

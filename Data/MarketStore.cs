@@ -6,7 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace GilBanking;
+namespace GilBanking.Data;
 
 /// <summary>Kleine JSON-Datei in einem frei wählbaren Ordner (Preis-Cache, selbst gesehene Marktpreise).</summary>
 public sealed class JsonStore<T> where T : new()
